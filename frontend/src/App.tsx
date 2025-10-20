@@ -225,11 +225,11 @@ function App() {
             <>
               <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border border-gray-200">
                 <div className="flex flex-wrap items-center justify-between gap-6">
-                  <div className="flex flex-wrap items-center gap-8">
-                    <div>
-                      <div className="text-sm font-medium text-gray-500 mb-1">Epoch ID</div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl font-bold text-gray-900">
+                  <div className="flex flex-wrap items-start gap-6">
+                    <div className="pr-6">
+                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Epoch ID</div>
+                      <div className="flex items-center gap-2 min-h-[2rem]">
+                        <span className="text-2xl font-bold text-gray-900 leading-none">
                           {data.epoch_id}
                         </span>
                         {data.is_current && (
@@ -240,29 +240,46 @@ function App() {
                       </div>
                     </div>
 
-                    <div className="border-l border-gray-200 pl-8">
-                      <div className="text-sm font-medium text-gray-500 mb-1">Block Height</div>
-                      <div className="text-2xl font-bold text-gray-900">
+                    <div className="border-l border-gray-200 pl-6 pr-6">
+                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Block Height</div>
+                      <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
                         {data.height.toLocaleString()}
                       </div>
                     </div>
 
-                    <div className="border-l border-gray-200 pl-8">
-                      <div className="text-sm font-medium text-gray-500 mb-1">Total Participants</div>
-                      <div className="text-2xl font-bold text-gray-900">
+                    <div className="border-l border-gray-200 pl-6 pr-6">
+                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Participants</div>
+                      <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
                         {data.participants.length}
                       </div>
                     </div>
 
-                    <div className="border-l border-gray-200 pl-8">
-                      <div className="text-sm font-medium text-gray-500 mb-1">Total Assigned Rewards</div>
-                      <div className="text-2xl font-bold text-gray-900">
-                        {data.total_assigned_rewards_gnk !== undefined && data.total_assigned_rewards_gnk !== null 
-                          ? `${data.total_assigned_rewards_gnk.toLocaleString()} GNK`
-                          : <span className="text-gray-400 italic">
-                              {loading ? 'Loading...' : data.is_current ? 'Not yet settled' : 'Calculating...'}
-                            </span>
-                        }
+                    <div className="border-l border-gray-200 pl-6 pr-6">
+                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Weight</div>
+                      <div>
+                        <div className="text-2xl font-bold text-gray-900 leading-none">
+                          {data.participants.reduce((sum, p) => sum + p.weight, 0).toLocaleString()}
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          ~{Math.round(data.participants.reduce((sum, p) => sum + p.weight, 0) / 437)} H100 GPUs
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="border-l border-gray-200 pl-6">
+                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Assigned Rewards</div>
+                      <div>
+                        <div className="text-2xl font-bold text-gray-900 leading-none">
+                          {data.total_assigned_rewards_gnk !== undefined && data.total_assigned_rewards_gnk !== null 
+                            ? `${data.total_assigned_rewards_gnk.toLocaleString()} GNK`
+                            : '-'
+                          }
+                        </div>
+                        {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null) && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            {loading ? 'Loading...' : data.is_current ? 'Pending settlement' : 'Calculating...'}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

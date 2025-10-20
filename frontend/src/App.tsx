@@ -180,24 +180,24 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-4 py-8 max-w-[1600px]">
-        <header className="mb-8">
-          <div className="flex items-center gap-4 mb-6">
-            <img src="/gonka.svg" alt="Gonka" className="h-12 w-auto" />
-            <div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-1">
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 md:py-8 max-w-[1600px]">
+        <header className="mb-6 md:mb-8">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 md:mb-6">
+            <img src="/gonka.svg" alt="Gonka" className="h-10 sm:h-12 w-auto" />
+            <div className="flex-1">
+              <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 mb-1">
                 Gonka Chain Inference Tracker
               </h1>
-              <p className="text-base text-gray-600">
+              <p className="text-sm sm:text-base text-gray-600">
                 Real-time monitoring of participant performance and model availability
               </p>
             </div>
           </div>
 
-          <div className="flex justify-between items-center">
+          <div className="flex gap-2 sm:gap-3">
             <button
               onClick={() => handlePageChange('dashboard')}
-              className={`px-4 py-2 font-medium rounded-md transition-colors ${
+              className={`flex-1 sm:flex-none px-4 py-2 font-medium rounded-md transition-colors ${
                 currentPage === 'dashboard'
                   ? 'bg-gray-900 text-white'
                   : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
@@ -207,7 +207,7 @@ function App() {
             </button>
             <button
               onClick={() => handlePageChange('timeline')}
-              className={`px-4 py-2 font-medium rounded-md transition-colors ${
+              className={`flex-1 sm:flex-none px-4 py-2 font-medium rounded-md transition-colors ${
                 currentPage === 'timeline'
                   ? 'bg-gray-900 text-white'
                   : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
@@ -223,68 +223,73 @@ function App() {
         ) : (
           data && (
             <>
-              <div className="bg-white rounded-lg shadow-sm p-6 mb-6 border border-gray-200">
-                <div className="flex flex-wrap items-center justify-between gap-6">
-                  <div className="flex flex-wrap items-start gap-6">
-                    <div className="pr-6">
-                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Epoch ID</div>
-                      <div className="flex items-center gap-2 min-h-[2rem]">
-                        <span className="text-2xl font-bold text-gray-900 leading-none">
-                          {data.epoch_id}
+              <div className="bg-white rounded-lg shadow-sm p-4 md:p-6 mb-6 border border-gray-200">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-4">
+                  <div className="col-span-2 sm:col-span-1">
+                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Epoch ID</div>
+                    <div className="flex items-center gap-2 min-h-[2rem]">
+                      <span className="text-2xl font-bold text-gray-900 leading-none">
+                        {data.epoch_id}
+                      </span>
+                      {data.is_current && (
+                        <span className="px-2.5 py-0.5 text-xs font-semibold bg-gray-900 text-white rounded">
+                          CURRENT
                         </span>
-                        {data.is_current && (
-                          <span className="px-2.5 py-0.5 text-xs font-semibold bg-gray-900 text-white rounded">
-                            CURRENT
-                          </span>
-                        )}
-                      </div>
+                      )}
                     </div>
+                  </div>
 
-                    <div className="border-l border-gray-200 pl-6 pr-6">
-                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Block Height</div>
-                      <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
-                        {data.height.toLocaleString()}
-                      </div>
+                  <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
+                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Block Height</div>
+                    <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
+                      {data.height.toLocaleString()}
                     </div>
+                  </div>
 
-                    <div className="border-l border-gray-200 pl-6 pr-6">
-                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Participants</div>
-                      <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
-                        {data.participants.length}
-                      </div>
+                  <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
+                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Participants</div>
+                    <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
+                      {data.participants.length}
                     </div>
+                  </div>
 
-                    <div className="border-l border-gray-200 pl-6 pr-6">
-                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Weight</div>
-                      <div>
-                        <div className="text-2xl font-bold text-gray-900 leading-none">
-                          {data.participants.reduce((sum, p) => sum + p.weight, 0).toLocaleString()}
-                        </div>
-                        <div className="text-xs text-gray-500 mt-1">
-                          ~{Math.round(data.participants.reduce((sum, p) => sum + p.weight, 0) / 437)} H100 GPUs
-                        </div>
+                  <div className="border-t lg:border-t-0 lg:border-l border-gray-200 pt-4 lg:pt-0 lg:pl-6">
+                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Weight</div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900 leading-none">
+                        {data.participants.reduce((sum, p) => sum + p.weight, 0).toLocaleString()}
                       </div>
-                    </div>
-
-                    <div className="border-l border-gray-200 pl-6">
-                      <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Assigned Rewards</div>
-                      <div>
-                        <div className="text-2xl font-bold text-gray-900 leading-none">
-                          {data.total_assigned_rewards_gnk !== undefined && data.total_assigned_rewards_gnk !== null 
-                            ? `${data.total_assigned_rewards_gnk.toLocaleString()} GNK`
-                            : '-'
-                          }
-                        </div>
-                        {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null) && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            {loading ? 'Loading...' : data.is_current ? 'Pending settlement' : 'Calculating...'}
-                          </div>
-                        )}
+                      <div className="text-xs text-gray-500 mt-1">
+                        ~{Math.round(data.participants.reduce((sum, p) => sum + p.weight, 0) / 437)} H100 GPUs
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-4">
+                  <div className="border-t lg:border-t-0 lg:border-l border-gray-200 pt-4 lg:pt-0 lg:pl-6 col-span-2 sm:col-span-3 lg:col-span-1">
+                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Assigned Rewards</div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900 leading-none">
+                        {data.total_assigned_rewards_gnk !== undefined && data.total_assigned_rewards_gnk !== null 
+                          ? `${data.total_assigned_rewards_gnk.toLocaleString()} GNK`
+                          : '-'
+                        }
+                      </div>
+                      {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null) && (
+                        <div className="text-xs text-gray-500 mt-1">
+                          {loading ? 'Loading...' : data.is_current ? 'Pending settlement' : 'Calculating...'}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
+                  <div className="flex-1 flex items-center justify-center sm:justify-start">
+                    {selectedEpochId === null && (
+                      <span className="text-xs text-gray-500">Auto-refresh in {autoRefreshCountdown}s</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
                     <EpochSelector
                       currentEpochId={currentEpochId || data.epoch_id}
                       selectedEpochId={selectedEpochId}
@@ -294,26 +299,20 @@ function App() {
                     <button
                       onClick={handleRefresh}
                       disabled={loading}
-                      className="px-5 py-2.5 bg-gray-900 text-white font-medium rounded-md hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                      className="flex-1 sm:flex-none px-5 py-2.5 bg-gray-900 text-white font-medium rounded-md hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
                     >
                       {loading ? 'Refreshing...' : 'Refresh'}
                     </button>
                   </div>
                 </div>
-
-                {selectedEpochId === null && (
-                  <div className="mt-4 pt-4 border-t border-gray-200 flex items-center justify-end text-xs text-gray-500">
-                    <span>Auto-refresh in {autoRefreshCountdown}s</span>
-                  </div>
-                )}
               </div>
 
-              <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+              <div className="bg-white rounded-lg shadow-sm p-4 md:p-6 border border-gray-200">
                 <div className="mb-4">
-                  <h2 className="text-xl font-bold text-gray-900 mb-1">
+                  <h2 className="text-lg md:text-xl font-bold text-gray-900 mb-1">
                     Participant Statistics
                   </h2>
-                  <p className="text-sm text-gray-500">
+                  <p className="text-xs md:text-sm text-gray-500">
                     Rows with red background indicate missed rate or invalidation rate exceeding 10%
                   </p>
                 </div>

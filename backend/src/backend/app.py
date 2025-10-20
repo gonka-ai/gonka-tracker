@@ -15,6 +15,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+POLL_CURRENT_EPOCH_INTERVAL = int(os.getenv("POLL_CURRENT_EPOCH_INTERVAL", "30"))
+POLL_JAIL_STATUS_INTERVAL = int(os.getenv("POLL_JAIL_STATUS_INTERVAL", "120"))
+POLL_NODE_HEALTH_INTERVAL = int(os.getenv("POLL_NODE_HEALTH_INTERVAL", "60"))
+POLL_REWARDS_INTERVAL = int(os.getenv("POLL_REWARDS_INTERVAL", "60"))
+POLL_WARM_KEYS_INTERVAL = int(os.getenv("POLL_WARM_KEYS_INTERVAL", "300"))
+POLL_HARDWARE_NODES_INTERVAL = int(os.getenv("POLL_HARDWARE_NODES_INTERVAL", "600"))
+POLL_EPOCH_TOTAL_REWARDS_INTERVAL = int(os.getenv("POLL_EPOCH_TOTAL_REWARDS_INTERVAL", "600"))
+
 background_task = None
 jail_polling_task = None
 health_polling_task = None
@@ -34,7 +42,7 @@ async def poll_current_epoch():
         except Exception as e:
             logger.error(f"Background polling error: {e}")
         
-        await asyncio.sleep(300)
+        await asyncio.sleep(POLL_CURRENT_EPOCH_INTERVAL)
 
 
 async def poll_jail_status():
@@ -55,7 +63,7 @@ async def poll_jail_status():
         except Exception as e:
             logger.error(f"Jail polling error: {e}")
         
-        await asyncio.sleep(120)
+        await asyncio.sleep(POLL_JAIL_STATUS_INTERVAL)
 
 
 async def poll_node_health():
@@ -72,7 +80,7 @@ async def poll_node_health():
         except Exception as e:
             logger.error(f"Node health polling error: {e}")
         
-        await asyncio.sleep(60)
+        await asyncio.sleep(POLL_NODE_HEALTH_INTERVAL)
 
 
 async def poll_rewards():
@@ -85,7 +93,7 @@ async def poll_rewards():
         except Exception as e:
             logger.error(f"Rewards polling error: {e}")
         
-        await asyncio.sleep(60)
+        await asyncio.sleep(POLL_REWARDS_INTERVAL)
 
 
 async def poll_warm_keys():
@@ -98,7 +106,7 @@ async def poll_warm_keys():
         except Exception as e:
             logger.error(f"Warm keys polling error: {e}")
         
-        await asyncio.sleep(300)
+        await asyncio.sleep(POLL_WARM_KEYS_INTERVAL)
 
 
 async def poll_hardware_nodes():
@@ -111,7 +119,7 @@ async def poll_hardware_nodes():
         except Exception as e:
             logger.error(f"Hardware nodes polling error: {e}")
         
-        await asyncio.sleep(600)
+        await asyncio.sleep(POLL_HARDWARE_NODES_INTERVAL)
 
 
 async def poll_epoch_total_rewards():
@@ -124,7 +132,7 @@ async def poll_epoch_total_rewards():
         except Exception as e:
             logger.error(f"Epoch total rewards polling error: {e}")
         
-        await asyncio.sleep(600)
+        await asyncio.sleep(POLL_EPOCH_TOTAL_REWARDS_INTERVAL)
 
 
 @asynccontextmanager
@@ -138,6 +146,8 @@ async def lifespan(app: FastAPI):
     
     logger.info(f"Initializing with URLs: {inference_urls}")
     logger.info(f"Database path: {db_path}")
+    logger.info(f"Polling intervals (s): epoch={POLL_CURRENT_EPOCH_INTERVAL}, jail={POLL_JAIL_STATUS_INTERVAL}, health={POLL_NODE_HEALTH_INTERVAL}, rewards={POLL_REWARDS_INTERVAL}")
+    logger.info(f"Polling intervals (s): warm_keys={POLL_WARM_KEYS_INTERVAL}, hardware_nodes={POLL_HARDWARE_NODES_INTERVAL}, total_rewards={POLL_EPOCH_TOTAL_REWARDS_INTERVAL}")
     
     cache_db = CacheDB(db_path)
     await cache_db.initialize()
@@ -154,7 +164,7 @@ async def lifespan(app: FastAPI):
     warm_keys_polling_task = asyncio.create_task(poll_warm_keys())
     hardware_nodes_polling_task = asyncio.create_task(poll_hardware_nodes())
     epoch_total_rewards_polling_task = asyncio.create_task(poll_epoch_total_rewards())
-    logger.info("Background polling tasks started (epoch: 5min, jail: 120s, health: 60s, rewards: 60s, warm_keys: 5min, hardware_nodes: 10min, total_rewards: 10min)")
+    logger.info("Background polling tasks started")
     
     yield
     

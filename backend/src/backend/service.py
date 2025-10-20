@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from backend.client import GonkaClient
@@ -77,8 +78,6 @@ class InferenceService:
         return requested_height
     
     async def get_current_epoch_stats(self, reload: bool = False) -> InferenceResponse:
-        import time
-        
         current_time = time.time()
         cache_age = (current_time - self.last_fetch_time) if self.last_fetch_time else None
         

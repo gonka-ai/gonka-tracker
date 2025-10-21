@@ -9,7 +9,7 @@ services:
       - "--entrypoints.websecure.address=:443"
     ports:
       - "80:80"
-      - "443:443"
+      - "${HTTPS_PORT:-127.0.0.1:9443}:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     restart: unless-stopped

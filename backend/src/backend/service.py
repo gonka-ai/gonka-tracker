@@ -211,7 +211,11 @@ class InferenceService:
             participants_stats = await self.merge_jail_and_health_data(epoch_id, participants_stats, target_height, active_participants_list)
             
             total_rewards_gnk = await self.cache_db.get_epoch_total_rewards(epoch_id)
-            if total_rewards_gnk is None:
+            if total_rewards_gnk is None or total_rewards_gnk == 0:
+                if total_rewards_gnk == 0:
+                    logger.warning(f"Detected invalid cached total rewards (0 GNK) for epoch {epoch_id}, deleting and recalculating")
+                    await self.cache_db.delete_epoch_total_rewards(epoch_id)
+                
                 if calculate_rewards_sync:
                     logger.info(f"Calculating total rewards synchronously for epoch {epoch_id}")
                     await self._calculate_and_cache_total_rewards(epoch_id)
@@ -839,9 +843,13 @@ class InferenceService:
                     continue
                 
                 cached_total = await self.cache_db.get_epoch_total_rewards(epoch_id)
-                if cached_total is not None:
+                if cached_total is not None and cached_total > 0:
                     logger.debug(f"Epoch {epoch_id} total rewards already cached: {cached_total} GNK")
                     continue
+                
+                if cached_total == 0:
+                    logger.warning(f"Detected invalid cached total rewards (0 GNK) for epoch {epoch_id}, recalculating")
+                    await self.cache_db.delete_epoch_total_rewards(epoch_id)
                 
                 logger.info(f"Calculating total rewards for epoch {epoch_id}")
                 await self._calculate_and_cache_total_rewards(epoch_id)

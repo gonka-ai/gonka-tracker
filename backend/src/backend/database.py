@@ -656,6 +656,18 @@ class CacheDB:
                 
                 return row["total_rewards_gnk"]
     
+    async def delete_epoch_total_rewards(
+        self,
+        epoch_id: int
+    ):
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                DELETE FROM epoch_total_rewards
+                WHERE epoch_id = ?
+            """, (epoch_id,))
+            await db.commit()
+            logger.info(f"Deleted total rewards cache for epoch {epoch_id}")
+    
     async def save_models_batch(
         self,
         epoch_id: int,

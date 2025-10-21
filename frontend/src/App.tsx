@@ -293,12 +293,12 @@ function App() {
                     <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Assigned Rewards</div>
                     <div>
                       <div className="text-2xl font-bold text-gray-900 leading-none">
-                        {data.total_assigned_rewards_gnk !== undefined && data.total_assigned_rewards_gnk !== null 
+                        {data.total_assigned_rewards_gnk !== undefined && data.total_assigned_rewards_gnk !== null && data.total_assigned_rewards_gnk > 0
                           ? `${data.total_assigned_rewards_gnk.toLocaleString()} GNK`
                           : '-'
                         }
                       </div>
-                      {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null) && (
+                      {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null || data.total_assigned_rewards_gnk === 0) && (
                         <div className="text-xs text-gray-500 mt-1">
                           {loading ? 'Loading...' : data.is_current ? 'Pending settlement' : 'Calculating...'}
                         </div>

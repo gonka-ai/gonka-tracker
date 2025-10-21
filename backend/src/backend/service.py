@@ -181,7 +181,7 @@ class InferenceService:
                 return self.current_epoch_data
             raise
     
-    async def get_historical_epoch_stats(self, epoch_id: int, height: Optional[int] = None) -> InferenceResponse:
+    async def get_historical_epoch_stats(self, epoch_id: int, height: Optional[int] = None, calculate_rewards_sync: bool = False) -> InferenceResponse:
         is_finished = await self.cache_db.is_epoch_finished(epoch_id)
         
         try:
@@ -212,7 +212,12 @@ class InferenceService:
             
             total_rewards_gnk = await self.cache_db.get_epoch_total_rewards(epoch_id)
             if total_rewards_gnk is None:
-                asyncio.create_task(self._calculate_and_cache_total_rewards(epoch_id))
+                if calculate_rewards_sync:
+                    logger.info(f"Calculating total rewards synchronously for epoch {epoch_id}")
+                    await self._calculate_and_cache_total_rewards(epoch_id)
+                    total_rewards_gnk = await self.cache_db.get_epoch_total_rewards(epoch_id)
+                else:
+                    asyncio.create_task(self._calculate_and_cache_total_rewards(epoch_id))
             
             asyncio.create_task(self._ensure_participant_caches(epoch_id, participants_stats))
             
@@ -325,8 +330,8 @@ class InferenceService:
                 logger.info(f"Epoch transition detected: {old_epoch_id} -> {current_epoch_id}")
                 
                 try:
-                    await self.get_historical_epoch_stats(old_epoch_id)
-                    logger.info(f"Marked epoch {old_epoch_id} as finished and cached final stats")
+                    await self.get_historical_epoch_stats(old_epoch_id, calculate_rewards_sync=True)
+                    logger.info(f"Marked epoch {old_epoch_id} as finished and cached final stats with total rewards")
                 except Exception as e:
                     logger.error(f"Failed to mark epoch {old_epoch_id} as finished: {e}")
     
@@ -776,6 +781,7 @@ class InferenceService:
             total_ugnk = 0
             fetched_count = 0
             rewards_batch = []
+            participants_with_rewards = 0
             
             for participant in participants:
                 participant_id = participant["index"]
@@ -787,8 +793,12 @@ class InferenceService:
                     )
                     perf = summary.get("epochPerformanceSummary", {})
                     rewarded_coins = perf.get("rewarded_coins", "0")
-                    total_ugnk += int(rewarded_coins)
+                    rewarded_amount = int(rewarded_coins)
+                    total_ugnk += rewarded_amount
                     fetched_count += 1
+                    
+                    if rewarded_amount > 0:
+                        participants_with_rewards += 1
                     
                     rewards_batch.append({
                         "epoch_id": epoch_id,
@@ -800,6 +810,10 @@ class InferenceService:
                     logger.debug(f"Could not fetch reward for {participant_id} in epoch {epoch_id}: {e}")
                     continue
             
+            if total_ugnk == 0 and fetched_count > 0:
+                logger.warning(f"Epoch {epoch_id} rewards calculation returned 0 for all {fetched_count} participants - rewards may not be available yet, skipping cache")
+                return
+            
             if rewards_batch:
                 await self.cache_db.save_reward_batch(rewards_batch)
                 logger.debug(f"Cached {len(rewards_batch)} participant rewards during total calculation")
@@ -807,7 +821,7 @@ class InferenceService:
             total_gnk = total_ugnk // 1_000_000_000
             
             await self.cache_db.save_epoch_total_rewards(epoch_id, total_gnk)
-            logger.info(f"Calculated and cached total rewards for epoch {epoch_id}: {total_gnk} GNK from {fetched_count}/{len(participants)} participants")
+            logger.info(f"Calculated and cached total rewards for epoch {epoch_id}: {total_gnk} GNK from {fetched_count}/{len(participants)} participants ({participants_with_rewards} with rewards)")
             
         except Exception as e:
             logger.error(f"Error calculating epoch total rewards for epoch {epoch_id}: {e}")

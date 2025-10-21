@@ -48,6 +48,13 @@ class CacheDB:
                     jailed_until TEXT,
                     ready_to_unjail BOOLEAN,
                     valcons_address TEXT,
+                    moniker TEXT,
+                    identity TEXT,
+                    keybase_username TEXT,
+                    keybase_picture_url TEXT,
+                    website TEXT,
+                    validator_consensus_key TEXT,
+                    consensus_key_mismatch BOOLEAN,
                     recorded_at TEXT NOT NULL,
                     PRIMARY KEY (epoch_id, participant_index)
                 )
@@ -128,6 +135,22 @@ class CacheDB:
                     total_rewards_gnk INTEGER NOT NULL,
                     calculated_at TEXT NOT NULL
                 )
+            """)
+            
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS models (
+                    epoch_id INTEGER NOT NULL,
+                    model_id TEXT NOT NULL,
+                    total_weight INTEGER NOT NULL,
+                    participant_count INTEGER NOT NULL,
+                    cached_at TEXT NOT NULL,
+                    PRIMARY KEY (epoch_id, model_id)
+                )
+            """)
+            
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_models_epoch
+                ON models(epoch_id)
             """)
             
             await db.commit()
@@ -270,8 +293,10 @@ class CacheDB:
             for status in jail_statuses:
                 await db.execute("""
                     INSERT OR REPLACE INTO jail_status 
-                    (epoch_id, participant_index, is_jailed, jailed_until, ready_to_unjail, valcons_address, recorded_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (epoch_id, participant_index, is_jailed, jailed_until, ready_to_unjail, valcons_address, 
+                     moniker, identity, keybase_username, keybase_picture_url, website, 
+                     validator_consensus_key, consensus_key_mismatch, recorded_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     epoch_id,
                     status.get("participant_index"),
@@ -279,6 +304,13 @@ class CacheDB:
                     status.get("jailed_until"),
                     status.get("ready_to_unjail", False),
                     status.get("valcons_address"),
+                    status.get("moniker"),
+                    status.get("identity"),
+                    status.get("keybase_username"),
+                    status.get("keybase_picture_url"),
+                    status.get("website"),
+                    status.get("validator_consensus_key"),
+                    status.get("consensus_key_mismatch"),
                     recorded_at
                 ))
             
@@ -310,14 +342,22 @@ class CacheDB:
                 
                 results = []
                 for row in rows:
+                    row_dict = dict(row)
                     results.append({
-                        "epoch_id": row["epoch_id"],
-                        "participant_index": row["participant_index"],
-                        "is_jailed": bool(row["is_jailed"]),
-                        "jailed_until": row["jailed_until"],
-                        "ready_to_unjail": bool(row["ready_to_unjail"]) if row["ready_to_unjail"] is not None else None,
-                        "valcons_address": row["valcons_address"],
-                        "recorded_at": row["recorded_at"]
+                        "epoch_id": row_dict["epoch_id"],
+                        "participant_index": row_dict["participant_index"],
+                        "is_jailed": bool(row_dict["is_jailed"]),
+                        "jailed_until": row_dict["jailed_until"],
+                        "ready_to_unjail": bool(row_dict["ready_to_unjail"]) if row_dict["ready_to_unjail"] is not None else None,
+                        "valcons_address": row_dict["valcons_address"],
+                        "moniker": row_dict.get("moniker"),
+                        "identity": row_dict.get("identity"),
+                        "keybase_username": row_dict.get("keybase_username"),
+                        "keybase_picture_url": row_dict.get("keybase_picture_url"),
+                        "website": row_dict.get("website"),
+                        "validator_consensus_key": row_dict.get("validator_consensus_key"),
+                        "consensus_key_mismatch": bool(row_dict.get("consensus_key_mismatch")) if row_dict.get("consensus_key_mismatch") is not None else None,
+                        "recorded_at": row_dict["recorded_at"]
                     })
                 
                 return results
@@ -615,4 +655,54 @@ class CacheDB:
                     return None
                 
                 return row["total_rewards_gnk"]
+    
+    async def save_models_batch(
+        self,
+        epoch_id: int,
+        models_data: List[Dict[str, Any]]
+    ):
+        cached_at = datetime.utcnow().isoformat()
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            for model in models_data:
+                model_id = model.get("model_id")
+                total_weight = model.get("total_weight", 0)
+                participant_count = model.get("participant_count", 0)
+                
+                await db.execute("""
+                    INSERT OR REPLACE INTO models 
+                    (epoch_id, model_id, total_weight, participant_count, cached_at)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (epoch_id, model_id, total_weight, participant_count, cached_at))
+            
+            await db.commit()
+            logger.info(f"Saved {len(models_data)} models for epoch {epoch_id}")
+    
+    async def get_models(
+        self,
+        epoch_id: int
+    ) -> Optional[List[Dict[str, Any]]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            async with db.execute("""
+                SELECT model_id, total_weight, participant_count, cached_at
+                FROM models
+                WHERE epoch_id = ?
+            """, (epoch_id,)) as cursor:
+                rows = await cursor.fetchall()
+                
+                if not rows:
+                    return None
+                
+                results = []
+                for row in rows:
+                    results.append({
+                        "model_id": row["model_id"],
+                        "total_weight": row["total_weight"],
+                        "participant_count": row["participant_count"],
+                        "cached_at": row["cached_at"]
+                    })
+                
+                return results
 

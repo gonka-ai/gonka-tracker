@@ -17,7 +17,10 @@ from backend.models import (
     MLNodeInfo,
     BlockInfo,
     TimelineEvent,
-    TimelineResponse
+    TimelineResponse,
+    ModelInfo,
+    ModelStats,
+    ModelsResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -333,14 +336,29 @@ class InferenceService:
             validators_with_tokens = [v for v in validators if v.get("tokens") and int(v.get("tokens")) > 0]
             
             active_indices = {p["index"] for p in active_participants}
+            participant_map = {p["index"]: p for p in active_participants}
             
-            participant_pubkey_map = {p["index"]: p.get("validator_key") for p in active_participants}
+            validator_by_operator = {}
+            for v in validators_with_tokens:
+                operator_address = v.get("operator_address", "")
+                if operator_address:
+                    validator_by_operator[operator_address] = v
             
             jail_statuses = []
             now_utc = datetime.now(timezone.utc)
             
-            for validator in validators_with_tokens:
-                operator_address = validator.get("operator_address", "")
+            for participant_index in active_indices:
+                participant = participant_map.get(participant_index)
+                if not participant:
+                    continue
+                
+                valoper_address = self.client.convert_bech32_address(participant_index, "gonkavaloper")
+                if not valoper_address:
+                    continue
+                
+                validator = validator_by_operator.get(valoper_address)
+                if not validator:
+                    continue
                 
                 consensus_pub = (
                     (validator.get("consensus_pubkey") or {}).get("key")
@@ -348,25 +366,19 @@ class InferenceService:
                     or ""
                 )
                 
-                if not consensus_pub:
-                    continue
+                participant_validator_key = participant.get("validator_key", "")
                 
-                participant_index = None
-                for index, pubkey in participant_pubkey_map.items():
-                    if pubkey == consensus_pub:
-                        participant_index = index
-                        break
-                
-                if not participant_index or participant_index not in active_indices:
-                    continue
+                consensus_key_mismatch = False
+                if consensus_pub and participant_validator_key:
+                    consensus_key_mismatch = consensus_pub != participant_validator_key
                 
                 is_jailed = bool(validator.get("jailed"))
-                valcons_addr = self.client.pubkey_to_valcons(consensus_pub)
+                valcons_addr = self.client.pubkey_to_valcons(consensus_pub) if consensus_pub else None
                 
                 jailed_until = None
                 ready_to_unjail = False
                 
-                if is_jailed:
+                if is_jailed and valcons_addr:
                     signing_info = await self.client.get_signing_info(valcons_addr, height=height)
                     if signing_info:
                         jailed_until_str = signing_info.get("jailed_until")
@@ -378,12 +390,32 @@ class InferenceService:
                             except Exception:
                                 pass
                 
+                description = validator.get("description", {})
+                moniker = description.get("moniker", "").strip()
+                identity = description.get("identity", "").strip()
+                website = description.get("website", "").strip()
+                
+                if moniker and moniker.startswith("gonkavaloper"):
+                    moniker = ""
+                
+                keybase_username = None
+                keybase_picture_url = None
+                if identity:
+                    keybase_username, keybase_picture_url = await self.client.get_keybase_info(identity)
+                
                 jail_statuses.append({
                     "participant_index": participant_index,
                     "is_jailed": is_jailed,
                     "jailed_until": jailed_until,
                     "ready_to_unjail": ready_to_unjail,
-                    "valcons_address": valcons_addr
+                    "valcons_address": valcons_addr,
+                    "moniker": moniker if moniker else None,
+                    "identity": identity if identity else None,
+                    "keybase_username": keybase_username,
+                    "keybase_picture_url": keybase_picture_url,
+                    "website": website if website else None,
+                    "validator_consensus_key": consensus_pub if consensus_pub else None,
+                    "consensus_key_mismatch": consensus_key_mismatch if consensus_pub and participant_validator_key else None
                 })
             
             await self.cache_db.save_jail_status_batch(epoch_id, jail_statuses)
@@ -448,6 +480,13 @@ class InferenceService:
                     participant.is_jailed = jail_info["is_jailed"]
                     participant.jailed_until = jail_info["jailed_until"]
                     participant.ready_to_unjail = jail_info["ready_to_unjail"]
+                    participant.moniker = jail_info.get("moniker")
+                    participant.identity = jail_info.get("identity")
+                    participant.keybase_username = jail_info.get("keybase_username")
+                    participant.keybase_picture_url = jail_info.get("keybase_picture_url")
+                    participant.website = jail_info.get("website")
+                    participant.validator_consensus_key = jail_info.get("validator_consensus_key")
+                    participant.consensus_key_mismatch = jail_info.get("consensus_key_mismatch")
                 
                 health_info = health_map.get(participant.index)
                 if health_info:
@@ -883,5 +922,184 @@ class InferenceService:
             current_epoch_start=current_epoch_start,
             current_epoch_index=current_epoch_index,
             epoch_length=epoch_length
+        )
+    
+    async def get_current_models(self) -> ModelsResponse:
+        epoch_data = await self.client.get_current_epoch_participants()
+        epoch_id = epoch_data["active_participants"]["epoch_group_id"]
+        participants = epoch_data["active_participants"]["participants"]
+        height = await self.client.get_latest_height()
+        
+        cached_models = await self.cache_db.get_models(epoch_id)
+        
+        if cached_models:
+            logger.info(f"Returning cached models for epoch {epoch_id}")
+        else:
+            logger.info(f"Fetching and aggregating models for epoch {epoch_id}")
+            
+            model_weights: Dict[str, int] = {}
+            model_participant_count: Dict[str, set] = {}
+            
+            for participant in participants:
+                participant_index = participant["index"]
+                models = participant.get("models", [])
+                ml_nodes_high_level = participant.get("ml_nodes", [])
+                
+                for model, ml_nodes_entry in zip(models, ml_nodes_high_level):
+                    if model not in model_weights:
+                        model_weights[model] = 0
+                        model_participant_count[model] = set()
+                    
+                    for ml_node in ml_nodes_entry.get("ml_nodes", []):
+                        poc_weight = ml_node.get("poc_weight", 0)
+                        model_weights[model] += poc_weight
+                    
+                    model_participant_count[model].add(participant_index)
+            
+            models_to_cache = []
+            for model_id in model_weights:
+                models_to_cache.append({
+                    "model_id": model_id,
+                    "total_weight": model_weights[model_id],
+                    "participant_count": len(model_participant_count[model_id])
+                })
+            
+            if models_to_cache:
+                await self.cache_db.save_models_batch(epoch_id, models_to_cache)
+            
+            cached_models = models_to_cache
+        
+        models_stats_data = await self.client.get_models_stats()
+        stats_list = models_stats_data.get("stats_models", [])
+        
+        models_all_data = await self.client.get_models_all()
+        models_list = models_all_data.get("model", [])
+        
+        models_dict = {m["id"]: m for m in models_list}
+        cached_dict = {m["model_id"]: m for m in cached_models} if cached_models else {}
+        
+        models_info = []
+        for model in models_list:
+            model_id = model["id"]
+            cached = cached_dict.get(model_id, {})
+            
+            models_info.append(ModelInfo(
+                id=model_id,
+                total_weight=cached.get("total_weight", 0),
+                participant_count=cached.get("participant_count", 0),
+                proposed_by=model.get("proposed_by", ""),
+                v_ram=model.get("v_ram", ""),
+                throughput_per_nonce=model.get("throughput_per_nonce", ""),
+                units_of_compute_per_token=model.get("units_of_compute_per_token", ""),
+                hf_repo=model.get("hf_repo", ""),
+                hf_commit=model.get("hf_commit", ""),
+                model_args=model.get("model_args", []),
+                validation_threshold=model.get("validation_threshold", {})
+            ))
+        
+        stats_info = []
+        for stat in stats_list:
+            stats_info.append(ModelStats(
+                model=stat.get("model", ""),
+                ai_tokens=stat.get("ai_tokens", "0"),
+                inferences=stat.get("inferences", 0)
+            ))
+        
+        return ModelsResponse(
+            epoch_id=epoch_id,
+            height=height,
+            models=models_info,
+            stats=stats_info,
+            cached_at=datetime.utcnow().isoformat(),
+            is_current=True
+        )
+    
+    async def get_historical_models(self, epoch_id: int, height: Optional[int] = None) -> ModelsResponse:
+        epoch_data = await self.client.get_epoch_participants(epoch_id)
+        participants = epoch_data["active_participants"]["participants"]
+        target_height = await self.get_canonical_height(epoch_id, height)
+        
+        cached_models = await self.cache_db.get_models(epoch_id)
+        
+        if cached_models:
+            logger.info(f"Returning cached models for epoch {epoch_id}")
+        else:
+            logger.info(f"Fetching and aggregating models for epoch {epoch_id}")
+            
+            model_weights: Dict[str, int] = {}
+            model_participant_count: Dict[str, set] = {}
+            
+            for participant in participants:
+                participant_index = participant["index"]
+                models = participant.get("models", [])
+                ml_nodes_high_level = participant.get("ml_nodes", [])
+                
+                for model, ml_nodes_entry in zip(models, ml_nodes_high_level):
+                    if model not in model_weights:
+                        model_weights[model] = 0
+                        model_participant_count[model] = set()
+                    
+                    for ml_node in ml_nodes_entry.get("ml_nodes", []):
+                        poc_weight = ml_node.get("poc_weight", 0)
+                        model_weights[model] += poc_weight
+                    
+                    model_participant_count[model].add(participant_index)
+            
+            models_to_cache = []
+            for model_id in model_weights:
+                models_to_cache.append({
+                    "model_id": model_id,
+                    "total_weight": model_weights[model_id],
+                    "participant_count": len(model_participant_count[model_id])
+                })
+            
+            if models_to_cache:
+                await self.cache_db.save_models_batch(epoch_id, models_to_cache)
+            
+            cached_models = models_to_cache
+        
+        models_stats_data = await self.client.get_models_stats()
+        stats_list = models_stats_data.get("stats_models", [])
+        
+        models_all_data = await self.client.get_models_all()
+        models_list = models_all_data.get("model", [])
+        
+        models_dict = {m["id"]: m for m in models_list}
+        cached_dict = {m["model_id"]: m for m in cached_models} if cached_models else {}
+        
+        models_info = []
+        for model in models_list:
+            model_id = model["id"]
+            cached = cached_dict.get(model_id, {})
+            
+            models_info.append(ModelInfo(
+                id=model_id,
+                total_weight=cached.get("total_weight", 0),
+                participant_count=cached.get("participant_count", 0),
+                proposed_by=model.get("proposed_by", ""),
+                v_ram=model.get("v_ram", ""),
+                throughput_per_nonce=model.get("throughput_per_nonce", ""),
+                units_of_compute_per_token=model.get("units_of_compute_per_token", ""),
+                hf_repo=model.get("hf_repo", ""),
+                hf_commit=model.get("hf_commit", ""),
+                model_args=model.get("model_args", []),
+                validation_threshold=model.get("validation_threshold", {})
+            ))
+        
+        stats_info = []
+        for stat in stats_list:
+            stats_info.append(ModelStats(
+                model=stat.get("model", ""),
+                ai_tokens=stat.get("ai_tokens", "0"),
+                inferences=stat.get("inferences", 0)
+            ))
+        
+        return ModelsResponse(
+            epoch_id=epoch_id,
+            height=target_height,
+            models=models_info,
+            stats=stats_info,
+            cached_at=datetime.utcnow().isoformat(),
+            is_current=False
         )
 

@@ -1,9 +1,10 @@
 import httpx
 import base64
 import hashlib
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import logging
 import time
+import bech32
 
 logger = logging.getLogger(__name__)
 
@@ -333,4 +334,46 @@ class GonkaClient:
     
     async def get_restrictions_params(self) -> Dict[str, Any]:
         return await self._make_request("/chain-api/productscience/inference/restrictions/params")
+    
+    @staticmethod
+    def convert_bech32_address(address: str, new_prefix: str) -> Optional[str]:
+        try:
+            hrp, data = bech32.bech32_decode(address)
+            if data is None:
+                logger.warning(f"Invalid Bech32 address: {address}")
+                return None
+            
+            new_address = bech32.bech32_encode(new_prefix, data)
+            if new_address is None:
+                logger.warning(f"Could not encode new Bech32 address with prefix {new_prefix}")
+                return None
+            
+            return new_address
+        except Exception as e:
+            logger.warning(f"Error converting address {address}: {e}")
+            return None
+    
+    async def get_keybase_info(self, identity: str) -> Tuple[Optional[str], Optional[str]]:
+        try:
+            api_url = f"https://keybase.io/_/api/1.0/user/lookup.json?key_suffix={identity}"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(api_url)
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get("status", {}).get("code") == 0 and data.get("them"):
+                    username = data["them"][0].get("basics", {}).get("username")
+                    if username:
+                        picture_url = f"https://keybase.io/{username}/picture?size=96"
+                        return username, picture_url
+        except Exception as e:
+            logger.warning(f"Failed to fetch Keybase info for {identity}: {e}")
+        
+        return None, None
+    
+    async def get_models_all(self) -> Dict[str, Any]:
+        return await self._make_request("/chain-api/productscience/inference/inference/models_all")
+    
+    async def get_models_stats(self) -> Dict[str, Any]:
+        return await self._make_request("/chain-api/productscience/inference/inference/models_stats_by_time")
 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, Any
-from backend.models import InferenceResponse, ParticipantDetailsResponse, TimelineResponse
+from backend.models import InferenceResponse, ParticipantDetailsResponse, TimelineResponse, ModelsResponse
 
 router = APIRouter(prefix="/v1")
 
@@ -97,4 +97,34 @@ async def get_timeline():
         return await inference_service.get_timeline()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch timeline: {str(e)}")
+
+
+@router.get("/models/current", response_model=ModelsResponse)
+async def get_current_models():
+    if inference_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        return await inference_service.get_current_models()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch current models: {str(e)}")
+
+
+@router.get("/models/epochs/{epoch_id}", response_model=ModelsResponse)
+async def get_historical_models(epoch_id: int, height: Optional[int] = None):
+    if inference_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    if epoch_id < 1:
+        raise HTTPException(status_code=400, detail="Invalid epoch ID")
+    
+    if height is not None and height < 1:
+        raise HTTPException(status_code=400, detail="Invalid height")
+    
+    try:
+        return await inference_service.get_historical_models(epoch_id, height)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch models for epoch {epoch_id}: {str(e)}")
 

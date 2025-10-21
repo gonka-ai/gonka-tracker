@@ -82,9 +82,23 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
 
             <div>
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Consensus Key</label>
-              <div className="mt-1 text-sm font-mono text-gray-900 break-all">
-                {participant.validator_key || <span className="text-gray-400">Not available</span>}
-              </div>
+              {participant.consensus_key_mismatch ? (
+                <div className="mt-1 space-y-1">
+                  <div className="text-sm font-mono text-red-600 break-all">
+                    <span className="font-semibold">Participant Key:</span> {participant.validator_key || '-'}
+                  </div>
+                  <div className="text-sm font-mono text-red-600 break-all">
+                    <span className="font-semibold">Validator Key:</span> {participant.validator_consensus_key || '-'}
+                  </div>
+                  <div className="text-xs text-red-600 font-semibold">
+                    Key mismatch detected - potential configuration error
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-1 text-sm font-mono text-gray-900 break-all">
+                  {participant.validator_key || <span className="text-gray-400">Not available</span>}
+                </div>
+              )}
             </div>
 
             <div>
@@ -96,6 +110,41 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
                   </a>
                 ) : (
                   <span className="text-gray-400">Not available</span>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</label>
+              <div className="mt-1">
+                {participant.keybase_picture_url ? (
+                  <div className="flex items-center gap-2">
+                    <img 
+                      src={participant.keybase_picture_url} 
+                      alt={participant.keybase_username || 'Keybase avatar'} 
+                      className="w-8 h-8 rounded-full"
+                    />
+                    <span className="text-sm text-gray-900">
+                      {participant.keybase_username || participant.moniker || '-'}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-900">
+                    {participant.moniker || '-'}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Website</label>
+              <div className="mt-1 text-sm text-gray-900 break-all">
+                {participant.website ? (
+                  <a href={participant.website} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+                    {participant.website}
+                  </a>
+                ) : (
+                  <span className="text-gray-400">-</span>
                 )}
               </div>
             </div>

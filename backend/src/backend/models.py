@@ -27,6 +27,13 @@ class ParticipantStats(BaseModel):
     ready_to_unjail: Optional[bool] = None
     node_healthy: Optional[bool] = None
     node_health_checked_at: Optional[str] = None
+    moniker: Optional[str] = None
+    identity: Optional[str] = None
+    keybase_username: Optional[str] = None
+    keybase_picture_url: Optional[str] = None
+    website: Optional[str] = None
+    validator_consensus_key: Optional[str] = None
+    consensus_key_mismatch: Optional[bool] = None
     
     @computed_field
     @property
@@ -142,4 +149,33 @@ class TimelineResponse(BaseModel):
     current_epoch_start: int
     current_epoch_index: int
     epoch_length: int
+
+
+class ModelInfo(BaseModel):
+    id: str
+    total_weight: int
+    participant_count: int
+    proposed_by: str
+    v_ram: str
+    throughput_per_nonce: str
+    units_of_compute_per_token: str
+    hf_repo: str
+    hf_commit: str
+    model_args: List[str]
+    validation_threshold: dict
+
+
+class ModelStats(BaseModel):
+    model: str
+    ai_tokens: str
+    inferences: int
+
+
+class ModelsResponse(BaseModel):
+    epoch_id: int
+    height: int
+    models: List[ModelInfo]
+    stats: List[ModelStats]
+    cached_at: str
+    is_current: bool
 

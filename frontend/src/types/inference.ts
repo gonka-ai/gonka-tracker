@@ -24,6 +24,13 @@ export interface Participant {
   ready_to_unjail?: boolean;
   node_healthy?: boolean;
   node_health_checked_at?: string;
+  moniker?: string;
+  identity?: string;
+  keybase_username?: string;
+  keybase_picture_url?: string;
+  website?: string;
+  validator_consensus_key?: string;
+  consensus_key_mismatch?: boolean;
 }
 
 export interface InferenceResponse {
@@ -94,5 +101,37 @@ export interface TimelineResponse {
   current_epoch_start: number;
   current_epoch_index: number;
   epoch_length: number;
+}
+
+export interface ModelInfo {
+  id: string;
+  total_weight: number;
+  participant_count: number;
+  proposed_by: string;
+  v_ram: string;
+  throughput_per_nonce: string;
+  units_of_compute_per_token: string;
+  hf_repo: string;
+  hf_commit: string;
+  model_args: string[];
+  validation_threshold: {
+    value: string;
+    exponent: number;
+  };
+}
+
+export interface ModelStats {
+  model: string;
+  ai_tokens: string;
+  inferences: number;
+}
+
+export interface ModelsResponse {
+  epoch_id: number;
+  height: number;
+  models: ModelInfo[];
+  stats: ModelStats[];
+  cached_at: string;
+  is_current: boolean;
 }
 

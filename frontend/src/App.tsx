@@ -3,8 +3,9 @@ import { InferenceResponse } from './types/inference'
 import { ParticipantTable } from './components/ParticipantTable'
 import { EpochSelector } from './components/EpochSelector'
 import { Timeline } from './components/Timeline'
+import { Models } from './components/Models'
 
-type Page = 'dashboard' | 'timeline'
+type Page = 'dashboard' | 'models' | 'timeline'
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard')
@@ -58,6 +59,11 @@ function App() {
     
     if (pageParam === 'timeline') {
       setCurrentPage('timeline')
+      return
+    }
+    
+    if (pageParam === 'models') {
+      setCurrentPage('models')
       return
     }
     
@@ -141,9 +147,15 @@ function App() {
       params.set('page', 'timeline')
       params.delete('epoch')
       params.delete('participant')
+      params.delete('model')
+    } else if (page === 'models') {
+      params.set('page', 'models')
+      params.delete('participant')
+      params.delete('block')
     } else {
       params.delete('page')
       params.delete('block')
+      params.delete('model')
     }
     
     const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname
@@ -206,6 +218,16 @@ function App() {
               Host Dashboard
             </button>
             <button
+              onClick={() => handlePageChange('models')}
+              className={`flex-1 sm:flex-none px-4 py-2 font-medium rounded-md transition-colors ${
+                currentPage === 'models'
+                  ? 'bg-gray-900 text-white'
+                  : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              Models
+            </button>
+            <button
               onClick={() => handlePageChange('timeline')}
               className={`flex-1 sm:flex-none px-4 py-2 font-medium rounded-md transition-colors ${
                 currentPage === 'timeline'
@@ -220,6 +242,8 @@ function App() {
 
         {currentPage === 'timeline' ? (
           <Timeline />
+        ) : currentPage === 'models' ? (
+          <Models />
         ) : (
           data && (
             <>

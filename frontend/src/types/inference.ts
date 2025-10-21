@@ -40,6 +40,11 @@ export interface InferenceResponse {
   cached_at?: string;
   is_current: boolean;
   total_assigned_rewards_gnk?: number;
+  current_block_height?: number;
+  current_block_timestamp?: string;
+  avg_block_time?: number;
+  next_poc_start_block?: number;
+  set_new_validators_block?: number;
 }
 
 export interface RewardInfo {

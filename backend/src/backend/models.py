@@ -66,6 +66,11 @@ class InferenceResponse(BaseModel):
     cached_at: Optional[str] = None
     is_current: bool = False
     total_assigned_rewards_gnk: Optional[int] = None
+    current_block_height: Optional[int] = None
+    current_block_timestamp: Optional[str] = None
+    avg_block_time: Optional[float] = None
+    next_poc_start_block: Optional[int] = None
+    set_new_validators_block: Optional[int] = None
 
 
 class EpochParticipant(BaseModel):

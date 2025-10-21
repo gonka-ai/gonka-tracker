@@ -4,6 +4,7 @@ import { ParticipantTable } from './components/ParticipantTable'
 import { EpochSelector } from './components/EpochSelector'
 import { Timeline } from './components/Timeline'
 import { Models } from './components/Models'
+import { EpochTimer } from './components/EpochTimer'
 
 type Page = 'dashboard' | 'models' | 'timeline'
 
@@ -248,7 +249,7 @@ function App() {
           data && (
             <>
               <div className="bg-white rounded-lg shadow-sm p-4 md:p-6 mb-6 border border-gray-200">
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-4">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-4">
                   <div className="col-span-2 sm:col-span-1">
                     <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Epoch ID</div>
                     <div className="flex items-center gap-2 min-h-[2rem]">
@@ -305,6 +306,8 @@ function App() {
                       )}
                     </div>
                   </div>
+
+                  <EpochTimer data={data} />
                 </div>
 
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">

@@ -46,6 +46,28 @@ class InferenceService:
         self.current_epoch_data: Optional[InferenceResponse] = None
         self.last_fetch_time: Optional[float] = None
     
+    async def _calculate_avg_block_time(self, current_height: int) -> float:
+        try:
+            reference_height = current_height - 10000
+            
+            current_block_data = await self.client.get_block(current_height)
+            current_timestamp = current_block_data["result"]["block"]["header"]["time"]
+            
+            reference_block_data = await self.client.get_block(reference_height)
+            reference_timestamp = reference_block_data["result"]["block"]["header"]["time"]
+            
+            current_dt = datetime.fromisoformat(current_timestamp.replace('Z', '+00:00'))
+            reference_dt = datetime.fromisoformat(reference_timestamp.replace('Z', '+00:00'))
+            
+            time_diff_seconds = (current_dt - reference_dt).total_seconds()
+            block_diff = current_height - reference_height
+            avg_block_time = round(time_diff_seconds / block_diff, 2)
+            
+            return avg_block_time
+        except Exception as e:
+            logger.warning(f"Failed to calculate avg block time: {e}")
+            return 6.0
+    
     async def get_canonical_height(self, epoch_id: int, requested_height: Optional[int] = None) -> int:
         latest_info = await self.client.get_latest_epoch()
         current_epoch_id = latest_info["latest_epoch"]["index"]
@@ -150,12 +172,45 @@ class InferenceService:
             active_participants_list = epoch_data["active_participants"]["participants"]
             participants_stats = await self.merge_jail_and_health_data(epoch_id, participants_stats, height, active_participants_list)
             
+            latest_info = await self.client.get_latest_epoch()
+            latest_epoch_index = latest_info["latest_epoch"]["index"]
+            
+            next_poc_start_block = None
+            set_new_validators_block = None
+            current_block_height = None
+            current_block_timestamp = None
+            avg_block_time = None
+            
+            if epoch_id == latest_epoch_index:
+                next_poc_start_block = latest_info["epoch_stages"]["next_poc_start"]
+                set_new_validators_block = latest_info["next_epoch_stages"]["set_new_validators"]
+                current_block_height = latest_info["block_height"]
+                
+                current_block_data = await self.client.get_block(current_block_height)
+                current_block_timestamp = current_block_data["result"]["block"]["header"]["time"]
+                
+                avg_block_time = await self._calculate_avg_block_time(current_block_height)
+            elif epoch_id == latest_info.get("next_epoch_stages", {}).get("epoch_index"):
+                next_poc_start_block = latest_info["next_epoch_stages"]["next_poc_start"]
+                set_new_validators_block = None
+                current_block_height = latest_info["block_height"]
+                
+                current_block_data = await self.client.get_block(current_block_height)
+                current_block_timestamp = current_block_data["result"]["block"]["header"]["time"]
+                
+                avg_block_time = await self._calculate_avg_block_time(current_block_height)
+            
             response = InferenceResponse(
                 epoch_id=epoch_id,
                 height=height,
                 participants=participants_stats,
                 cached_at=datetime.utcnow().isoformat(),
-                is_current=True
+                is_current=True,
+                current_block_height=current_block_height,
+                current_block_timestamp=current_block_timestamp,
+                avg_block_time=avg_block_time,
+                next_poc_start_block=next_poc_start_block,
+                set_new_validators_block=set_new_validators_block
             )
             
             await self.cache_db.save_stats_batch(

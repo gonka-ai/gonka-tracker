@@ -45,6 +45,9 @@ class InferenceService:
         self.current_epoch_id: Optional[int] = None
         self.current_epoch_data: Optional[InferenceResponse] = None
         self.last_fetch_time: Optional[float] = None
+        self.timeline_cache: Optional[TimelineResponse] = None
+        self.timeline_cache_time: Optional[float] = None
+        self.timeline_cache_ttl: float = 180.0
     
     async def _calculate_avg_block_time(self, current_height: int) -> float:
         try:
@@ -960,6 +963,15 @@ class InferenceService:
             logger.error(f"Error ensuring participant caches: {e}")
     
     async def get_timeline(self):
+        current_time = time.time()
+        
+        if (self.timeline_cache is not None and 
+            self.timeline_cache_time is not None and
+            current_time - self.timeline_cache_time < self.timeline_cache_ttl):
+            logger.info(f"Returning cached timeline data (age: {current_time - self.timeline_cache_time:.1f}s)")
+            return self.timeline_cache
+        
+        logger.info("Fetching fresh timeline data")
         current_height = await self.client.get_latest_height()
         current_block_data = await self.client.get_block(current_height)
         current_timestamp = current_block_data["result"]["block"]["header"]["time"]
@@ -982,6 +994,8 @@ class InferenceService:
         current_epoch_start = latest_epoch_info["latest_epoch"]["poc_start_block_height"]
         current_epoch_index = latest_epoch_info["latest_epoch"]["index"]
         epoch_length = latest_epoch_info["epoch_params"]["epoch_length"]
+        epoch_stages = latest_epoch_info.get("epoch_stages")
+        next_epoch_stages = latest_epoch_info.get("next_epoch_stages")
         
         events = [
             TimelineEvent(
@@ -991,15 +1005,23 @@ class InferenceService:
             )
         ]
         
-        return TimelineResponse(
+        response = TimelineResponse(
             current_block=BlockInfo(height=current_height, timestamp=current_timestamp),
             reference_block=BlockInfo(height=reference_height, timestamp=reference_timestamp),
             avg_block_time=avg_block_time,
             events=events,
             current_epoch_start=current_epoch_start,
             current_epoch_index=current_epoch_index,
-            epoch_length=epoch_length
+            epoch_length=epoch_length,
+            epoch_stages=epoch_stages,
+            next_epoch_stages=next_epoch_stages
         )
+        
+        self.timeline_cache = response
+        self.timeline_cache_time = current_time
+        logger.info(f"Cached fresh timeline data")
+        
+        return response
     
     async def get_current_models(self) -> ModelsResponse:
         epoch_data = await self.client.get_current_epoch_participants()

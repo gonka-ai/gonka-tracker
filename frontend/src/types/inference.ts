@@ -106,6 +106,15 @@ export interface TimelineResponse {
   current_epoch_start: number;
   current_epoch_index: number;
   epoch_length: number;
+  epoch_stages?: {
+    inference_validation_cutoff: number;
+    next_poc_start: number;
+    [key: string]: any;
+  };
+  next_epoch_stages?: {
+    set_new_validators: number;
+    [key: string]: any;
+  };
 }
 
 export interface ModelInfo {

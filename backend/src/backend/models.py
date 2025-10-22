@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, computed_field
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 
@@ -154,6 +154,8 @@ class TimelineResponse(BaseModel):
     current_epoch_start: int
     current_epoch_index: int
     epoch_length: int
+    epoch_stages: Optional[Dict[str, Any]] = None
+    next_epoch_stages: Optional[Dict[str, Any]] = None
 
 
 class ModelInfo(BaseModel):

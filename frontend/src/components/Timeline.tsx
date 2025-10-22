@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { TimelineResponse } from '../types/inference'
 
 export function Timeline() {
@@ -8,11 +8,24 @@ export function Timeline() {
   const [hoveredBlock, setHoveredBlock] = useState<number | null>(null)
   const [hoveredEpoch, setHoveredEpoch] = useState<number | null>(null)
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null)
+  const [targetHeight, setTargetHeight] = useState<number | null>(null)
+  const [urlBlock, setUrlBlock] = useState<number | null>(null)
+  const [currentTime, setCurrentTime] = useState(Date.now())
+  const detailedTimelineRef = useRef<HTMLDivElement>(null)
+  const lastFetchRef = useRef<number>(0)
+  const dataFetchTimeRef = useRef<string>('')
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
+  const FETCH_INTERVAL = 180000
 
   useEffect(() => {
     const fetchTimeline = async () => {
+      const now = Date.now()
+      
+      if (lastFetchRef.current > 0 && now - lastFetchRef.current < FETCH_INTERVAL) {
+        return
+      }
+      
       setLoading(true)
       setError('')
 
@@ -25,14 +38,40 @@ export function Timeline() {
         
         const result = await response.json()
         setData(result)
+        lastFetchRef.current = now
+        dataFetchTimeRef.current = new Date(result.current_block.timestamp).toLocaleString()
         
         const params = new URLSearchParams(window.location.search)
         const blockParam = params.get('block')
+        const heightParam = params.get('height')
+        
+        const detailedMinBlock = result.current_block.height
+        const detailedMaxBlock = result.current_block.height + result.epoch_length
         
         if (blockParam) {
           const blockHeight = parseInt(blockParam)
           if (!isNaN(blockHeight)) {
             setHoveredBlock(blockHeight)
+            setUrlBlock(blockHeight)
+            
+            if (blockHeight >= detailedMinBlock && blockHeight <= detailedMaxBlock) {
+              setTimeout(() => {
+                detailedTimelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }, 100)
+            }
+          }
+        }
+        
+        if (heightParam) {
+          const height = parseInt(heightParam)
+          if (!isNaN(height)) {
+            setTargetHeight(height)
+            
+            if (height >= detailedMinBlock && height <= detailedMaxBlock) {
+              setTimeout(() => {
+                detailedTimelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              }, 100)
+            }
           }
         }
       } catch (err) {
@@ -43,10 +82,24 @@ export function Timeline() {
     }
 
     fetchTimeline()
-  }, [apiUrl])
+    
+    const intervalId = setInterval(() => {
+      fetchTimeline()
+    }, FETCH_INTERVAL)
+    
+    return () => clearInterval(intervalId)
+  }, [apiUrl, FETCH_INTERVAL])
 
-  const calculateBlockTime = (blockHeight: number): string => {
-    if (!data) return ''
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now())
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [data])
+
+  const calculateBlockTime = (blockHeight: number): { utc: string; local: string } => {
+    if (!data) return { utc: '', local: '' }
 
     const currentHeight = data.current_block.height
     const currentTime = new Date(data.current_block.timestamp).getTime()
@@ -54,7 +107,20 @@ export function Timeline() {
     const timeDiff = blockDiff * data.avg_block_time * 1000
 
     const estimatedTime = new Date(currentTime + timeDiff)
-    return estimatedTime.toUTCString()
+    const options: Intl.DateTimeFormatOptions = {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }
+    
+    return {
+      utc: estimatedTime.toLocaleString('en-US', { ...options, timeZone: 'UTC' }) + ' UTC',
+      local: estimatedTime.toLocaleString('en-US', { ...options, timeZoneName: 'short' })
+    }
   }
 
   const handleTimelineClick = (blockHeight: number) => {
@@ -62,6 +128,24 @@ export function Timeline() {
     const params = new URLSearchParams(window.location.search)
     params.set('block', blockHeight.toString())
     window.history.replaceState({}, '', `?${params.toString()}`)
+  }
+
+  const formatCountdownTime = (seconds: number): string => {
+    const totalSeconds = Math.floor(seconds)
+    const days = Math.floor(totalSeconds / 86400)
+    const hours = Math.floor((totalSeconds % 86400) / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const secs = totalSeconds % 60
+
+    if (days > 0) {
+      return `${days}d ${hours}h ${minutes}m ${secs}s`
+    } else if (hours > 0) {
+      return `${hours}h ${minutes}m ${secs}s`
+    } else if (minutes > 0) {
+      return `${minutes}m ${secs}s`
+    } else {
+      return `${secs}s`
+    }
   }
 
   if (loading) {
@@ -128,6 +212,11 @@ export function Timeline() {
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs text-gray-500">
+            Data cached at {dataFetchTimeRef.current} (refreshes every 3 min)
+          </div>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           <div>
             <div className="text-sm font-medium text-gray-500 mb-1">Current Block</div>
@@ -154,7 +243,309 @@ export function Timeline() {
             </div>
           </div>
         </div>
+      </div>
 
+      <div ref={detailedTimelineRef} className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-900">Next Epoch</h2>
+          {(() => {
+            const detailedMinBlock = data.current_block.height
+            const detailedMaxBlock = data.current_block.height + data.epoch_length
+            const blockToShow = targetHeight || urlBlock
+            
+            if (blockToShow && blockToShow >= detailedMinBlock && blockToShow <= detailedMaxBlock) {
+              const serverTime = new Date(data.current_block.timestamp).getTime()
+              const elapsedSeconds = (currentTime - serverTime) / 1000
+              const estimatedBlocksPassed = elapsedSeconds / data.avg_block_time
+              const estimatedCurrentBlock = Math.floor(data.current_block.height + estimatedBlocksPassed)
+              
+              const blocksUntilTarget = blockToShow - estimatedCurrentBlock
+              const secondsUntilTarget = Math.max(0, blocksUntilTarget * data.avg_block_time)
+              
+              if (blocksUntilTarget > 0) {
+                return (
+                  <div className="flex items-center gap-4 text-sm">
+                    <div className="text-gray-600">
+                      Time to block <span className="font-semibold text-gray-900">{blockToShow.toLocaleString()}</span>:
+                    </div>
+                    <div className="font-bold text-blue-600">
+                      {formatCountdownTime(secondsUntilTarget)}
+                    </div>
+                    <div className="text-gray-500">
+                      (~{Math.ceil(secondsUntilTarget / data.avg_block_time).toLocaleString()} blocks)
+                    </div>
+                  </div>
+                )
+              } else {
+                return (
+                  <div className="text-sm text-gray-600">
+                    Block <span className="font-semibold text-gray-900">{blockToShow.toLocaleString()}</span> has passed
+                  </div>
+                )
+              }
+            }
+            return null
+          })()}
+        </div>
+        
+        <div className="relative mt-8">
+          {(() => {
+            const detailedMinBlock = data.current_block.height
+            const detailedMaxBlock = data.current_block.height + data.epoch_length
+            const detailedBlockRange = detailedMaxBlock - detailedMinBlock
+
+            const futureEvents: Array<{ block: number; label: string; fullLabel: string }> = []
+            if (data.epoch_stages?.inference_validation_cutoff && data.epoch_stages.inference_validation_cutoff > data.current_block.height && data.epoch_stages.inference_validation_cutoff <= detailedMaxBlock) {
+              futureEvents.push({
+                block: data.epoch_stages.inference_validation_cutoff,
+                label: "Val Cutoff",
+                fullLabel: "Inference Validation Cutoff"
+              })
+            }
+            if (data.epoch_stages?.next_poc_start && data.epoch_stages.next_poc_start > data.current_block.height && data.epoch_stages.next_poc_start <= detailedMaxBlock) {
+              futureEvents.push({
+                block: data.epoch_stages.next_poc_start,
+                label: "PoC Start",
+                fullLabel: "Next PoC Start"
+              })
+            }
+            if (data.next_epoch_stages?.set_new_validators && data.next_epoch_stages.set_new_validators > data.current_block.height && data.next_epoch_stages.set_new_validators <= detailedMaxBlock) {
+              futureEvents.push({
+                block: data.next_epoch_stages.set_new_validators,
+                label: "New Validators",
+                fullLabel: "Set New Validators"
+              })
+            }
+
+            const tickBlocks = []
+            const firstTick = Math.ceil(detailedMinBlock / 100) * 100
+            for (let block = firstTick; block <= detailedMaxBlock; block += 100) {
+              tickBlocks.push(block)
+            }
+
+            const validationCutoff = data.epoch_stages?.inference_validation_cutoff
+            const setValidators = data.next_epoch_stages?.set_new_validators
+
+            return (
+              <svg
+                width="100%"
+                height="280"
+                className="overflow-visible cursor-pointer"
+                onMouseMove={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const ratio = x / rect.width
+                  const block = Math.round(detailedMinBlock + ratio * detailedBlockRange)
+                  setHoveredBlock(block)
+                  setMousePosition({ x: e.clientX, y: e.clientY })
+                }}
+                onMouseLeave={() => {
+                  setHoveredBlock(null)
+                  setMousePosition(null)
+                }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const ratio = x / rect.width
+                  const block = Math.round(detailedMinBlock + ratio * detailedBlockRange)
+                  handleTimelineClick(block)
+                }}
+              >
+                {validationCutoff && setValidators && validationCutoff >= detailedMinBlock && setValidators <= detailedMaxBlock && (
+                  <rect
+                    x={`${((validationCutoff - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                    y="40"
+                    width={`${((setValidators - validationCutoff) / detailedBlockRange) * 100}%`}
+                    height="200"
+                    fill="#FEE2E2"
+                    opacity="0.5"
+                  />
+                )}
+
+                <line
+                  x1="0"
+                  y1="140"
+                  x2="100%"
+                  y2="140"
+                  stroke="#E5E7EB"
+                  strokeWidth="2"
+                />
+
+                {tickBlocks.map((block, idx) => {
+                  const position = ((block - detailedMinBlock) / detailedBlockRange) * 100
+                  if (position < 0 || position > 100) return null
+                  
+                  return (
+                    <line
+                      key={`tick-${idx}`}
+                      x1={`${position}%`}
+                      y1="130"
+                      x2={`${position}%`}
+                      y2="150"
+                      stroke="#D1D5DB"
+                      strokeWidth="1"
+                      opacity="0.3"
+                    />
+                  )
+                })}
+
+                <line
+                  x1={`${((data.current_block.height - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                  y1="80"
+                  x2={`${((data.current_block.height - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                  y2="200"
+                  stroke="#111827"
+                  strokeWidth="3"
+                />
+                <text
+                  x={`${((data.current_block.height - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                  y="70"
+                  textAnchor="middle"
+                  className="text-sm fill-gray-900 font-semibold"
+                >
+                  Current
+                </text>
+
+                {futureEvents.map((event, idx) => {
+                  const position = ((event.block - detailedMinBlock) / detailedBlockRange) * 100
+                  if (position < 0 || position > 100) return null
+                  
+                  const isBottom = idx % 2 === 0
+                  const labelY = isBottom ? 250 : 30
+                  const lineY1 = isBottom ? 200 : 80
+                  
+                  const sameRowEvents = futureEvents.filter((_e, i) => (i % 2 === 0) === isBottom)
+                  const indexInRow = sameRowEvents.findIndex(e => e.block === event.block)
+                  const totalInRow = sameRowEvents.length
+                  
+                  let textAnchor: "start" | "middle" | "end" = "middle"
+                  let xOffset = 0
+                  
+                  if (totalInRow > 1) {
+                    if (indexInRow === 0) {
+                      textAnchor = "end"
+                      xOffset = -5
+                    } else if (indexInRow === totalInRow - 1) {
+                      textAnchor = "start"
+                      xOffset = 5
+                    }
+                  } else {
+                    if (position < 20) {
+                      textAnchor = "start"
+                    } else if (position > 80) {
+                      textAnchor = "end"
+                    }
+                  }
+                  
+                  return (
+                    <g
+                      key={idx}
+                      className="cursor-pointer transition-all"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleTimelineClick(event.block)
+                      }}
+                    >
+                      <line
+                        x1={`${position}%`}
+                        y1={lineY1}
+                        x2={`${position}%`}
+                        y2="140"
+                        stroke="#3B82F6"
+                        strokeWidth="2"
+                        strokeDasharray="4 2"
+                      />
+                      <circle
+                        cx={`${position}%`}
+                        cy="140"
+                        r="5"
+                        fill="#3B82F6"
+                      />
+                      <text
+                        x={`calc(${position}% + ${xOffset}px)`}
+                        y={labelY}
+                        textAnchor={textAnchor}
+                        className="text-xs font-semibold"
+                        fill="#3B82F6"
+                      >
+                        {event.label}
+                      </text>
+                      <text
+                        x={`calc(${position}% + ${xOffset}px)`}
+                        y={labelY + 12}
+                        textAnchor={textAnchor}
+                        className="text-xs"
+                        fill="#3B82F6"
+                      >
+                        {event.block.toLocaleString()}
+                      </text>
+                    </g>
+                  )
+                })}
+
+                {(() => {
+                  const blockToShow = targetHeight || urlBlock
+                  if (blockToShow && blockToShow >= detailedMinBlock && blockToShow <= detailedMaxBlock) {
+                    return (
+                      <g>
+                        <line
+                          x1={`${((blockToShow - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                          y1="80"
+                          x2={`${((blockToShow - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                          y2="200"
+                          stroke="#8B5CF6"
+                          strokeWidth="3"
+                          strokeDasharray="6 3"
+                        />
+                        <circle
+                          cx={`${((blockToShow - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                          cy="140"
+                          r="8"
+                          fill="#8B5CF6"
+                        />
+                        <text
+                          x={`${((blockToShow - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                          y="270"
+                          textAnchor="middle"
+                          className="text-xs font-semibold"
+                          fill="#8B5CF6"
+                        >
+                          Target
+                        </text>
+                        <text
+                          x={`${((blockToShow - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                          y="215"
+                          textAnchor="middle"
+                          className="text-xs"
+                          fill="#8B5CF6"
+                        >
+                          {blockToShow.toLocaleString()}
+                        </text>
+                      </g>
+                    )
+                  }
+                  return null
+                })()}
+
+                {hoveredBlock !== null && hoveredBlock >= detailedMinBlock && hoveredBlock <= detailedMaxBlock && (
+                  <line
+                    x1={`${((hoveredBlock - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                    y1="80"
+                    x2={`${((hoveredBlock - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                    y2="200"
+                    stroke="#F59E0B"
+                    strokeWidth="2"
+                    opacity="0.5"
+                  />
+                )}
+              </svg>
+            )
+          })()}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+        <h2 className="text-xl font-bold text-gray-900 mb-4">2-Month Timeline</h2>
         <div className="relative mt-8">
           <svg
             width="100%"
@@ -326,7 +717,7 @@ export function Timeline() {
             className="fixed z-50 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm pointer-events-none"
             style={{
               left: mousePosition.x + 10,
-              top: mousePosition.y - 60,
+              top: mousePosition.y - 80,
             }}
           >
             {hoveredEpoch !== null ? (
@@ -334,14 +725,20 @@ export function Timeline() {
                 <div className="font-semibold">Epoch {hoveredEpoch} Start</div>
                 <div className="text-xs text-gray-400 mt-1">Block {hoveredBlock.toLocaleString()}</div>
                 <div className="text-xs text-gray-300 mt-1">
-                  {calculateBlockTime(hoveredBlock)}
+                  {calculateBlockTime(hoveredBlock).utc}
+                </div>
+                <div className="text-xs text-gray-300">
+                  {calculateBlockTime(hoveredBlock).local}
                 </div>
               </>
             ) : (
               <>
                 <div className="font-semibold">Block {hoveredBlock.toLocaleString()}</div>
                 <div className="text-xs text-gray-300 mt-1">
-                  {calculateBlockTime(hoveredBlock)}
+                  {calculateBlockTime(hoveredBlock).utc}
+                </div>
+                <div className="text-xs text-gray-300">
+                  {calculateBlockTime(hoveredBlock).local}
                 </div>
               </>
             )}
@@ -389,7 +786,8 @@ export function Timeline() {
                       </div>
                     </div>
                     <div className="text-sm text-gray-600 md:text-right">
-                      {eventTime}
+                      <div>{eventTime.utc}</div>
+                      <div className="text-xs text-gray-500">{eventTime.local}</div>
                     </div>
                   </div>
                 </div>

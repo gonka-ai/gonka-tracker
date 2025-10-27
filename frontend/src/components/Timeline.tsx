@@ -291,7 +291,7 @@ export function Timeline() {
         <div className="relative mt-8">
           {(() => {
             const detailedMinBlock = data.current_block.height
-            const detailedMaxBlock = data.current_block.height + data.epoch_length
+            const detailedMaxBlock = data.current_block.height + data.epoch_length + 300
             const detailedBlockRange = detailedMaxBlock - detailedMinBlock
 
             const futureEvents: Array<{ block: number; label: string; fullLabel: string }> = []
@@ -305,8 +305,8 @@ export function Timeline() {
             if (data.epoch_stages?.next_poc_start && data.epoch_stages.next_poc_start > data.current_block.height && data.epoch_stages.next_poc_start <= detailedMaxBlock) {
               futureEvents.push({
                 block: data.epoch_stages.next_poc_start,
-                label: "PoC Start",
-                fullLabel: "Next PoC Start"
+                label: `PoC ${data.current_epoch_index + 1} Start`,
+                fullLabel: `PoC ${data.current_epoch_index + 1} Start`
               })
             }
             if (data.next_epoch_stages?.set_new_validators && data.next_epoch_stages.set_new_validators > data.current_block.height && data.next_epoch_stages.set_new_validators <= detailedMaxBlock) {
@@ -316,11 +316,39 @@ export function Timeline() {
                 fullLabel: "Set New Validators"
               })
             }
+            
+            if (data.epoch_stages?.next_poc_start && data.epoch_length) {
+              const secondPocStart = data.epoch_stages.next_poc_start + data.epoch_length
+              if (secondPocStart > data.current_block.height && secondPocStart <= detailedMaxBlock) {
+                futureEvents.push({
+                  block: secondPocStart,
+                  label: `PoC ${data.current_epoch_index + 2} Start`,
+                  fullLabel: `PoC ${data.current_epoch_index + 2} Start`
+                })
+              }
+            }
+            
+            if (data.next_epoch_stages?.set_new_validators && data.epoch_length) {
+              const secondSetValidators = data.next_epoch_stages.set_new_validators + data.epoch_length
+              if (secondSetValidators > data.current_block.height && secondSetValidators <= detailedMaxBlock) {
+                futureEvents.push({
+                  block: secondSetValidators,
+                  label: "New Validators",
+                  fullLabel: "Set New Validators (Epoch +2)"
+                })
+              }
+            }
 
             const tickBlocks = []
             const firstTick = Math.ceil(detailedMinBlock / 100) * 100
             for (let block = firstTick; block <= detailedMaxBlock; block += 100) {
               tickBlocks.push(block)
+            }
+
+            const milestoneBlocks = []
+            const firstMilestone = Math.ceil(detailedMinBlock / 1000) * 1000
+            for (let block = firstMilestone; block <= detailedMaxBlock; block += 1000) {
+              milestoneBlocks.push(block)
             }
 
             const validationCutoff = data.epoch_stages?.inference_validation_cutoff
@@ -351,11 +379,11 @@ export function Timeline() {
                   handleTimelineClick(block)
                 }}
               >
-                {validationCutoff && setValidators && validationCutoff >= detailedMinBlock && setValidators <= detailedMaxBlock && (
+                {validationCutoff && setValidators && setValidators >= detailedMinBlock && validationCutoff <= detailedMaxBlock && (
                   <rect
-                    x={`${((validationCutoff - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                    x={`${((Math.max(validationCutoff, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
                     y="40"
-                    width={`${((setValidators - validationCutoff) / detailedBlockRange) * 100}%`}
+                    width={`${((Math.min(setValidators, detailedMaxBlock) - Math.max(validationCutoff, detailedMinBlock)) / detailedBlockRange) * 100}%`}
                     height="200"
                     fill="#FEE2E2"
                     opacity="0.5"
@@ -386,6 +414,34 @@ export function Timeline() {
                       strokeWidth="1"
                       opacity="0.3"
                     />
+                  )
+                })}
+
+                {milestoneBlocks.map((block, idx) => {
+                  const position = ((block - detailedMinBlock) / detailedBlockRange) * 100
+                  if (position < 0 || position > 100) return null
+                  
+                  return (
+                    <g key={`milestone-${idx}`}>
+                      <line
+                        x1={`${position}%`}
+                        y1="120"
+                        x2={`${position}%`}
+                        y2="160"
+                        stroke="#9CA3AF"
+                        strokeWidth="1.5"
+                        opacity="0.5"
+                      />
+                      <text
+                        x={`${position}%`}
+                        y="175"
+                        textAnchor="middle"
+                        className="text-xs fill-gray-500"
+                        style={{ fontSize: '10px' }}
+                      >
+                        {block.toLocaleString()}
+                      </text>
+                    </g>
                   )
                 })}
 

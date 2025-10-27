@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { Participant, ParticipantDetailsResponse, ParticipantInferencesResponse, InferenceDetail } from '../types/inference'
 import { InferenceDetailModal } from './InferenceDetailModal'
 
@@ -20,7 +20,7 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
   const [inferencesLoading, setInferencesLoading] = useState(false)
   const [inferencesError, setInferencesError] = useState<string | null>(null)
   const [selectedInference, setSelectedInference] = useState<InferenceDetail | null>(null)
-  const [lastInferencesFetch, setLastInferencesFetch] = useState<{timestamp: number, key: string}>({timestamp: 0, key: ''})
+  const lastInferencesFetch = useRef<{timestamp: number, key: string}>({timestamp: 0, key: ''})
   
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -44,6 +44,7 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
     setInferences(null)
     setInferencesError(null)
     setSelectedInference(null)
+    lastInferencesFetch.current = {timestamp: 0, key: ''}
     setLoading(true)
     fetch(`/api/v1/participants/${participant.index}?epoch_id=${epochId}`)
       .then(res => {
@@ -73,9 +74,9 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
     
     const fetchKey = `${participant.index}-${epochId}`
     const now = Date.now()
-    const timeSinceLastFetch = now - lastInferencesFetch.timestamp
+    const timeSinceLastFetch = now - lastInferencesFetch.current.timestamp
     
-    if (lastInferencesFetch.key === fetchKey && lastInferencesFetch.timestamp > 0 && timeSinceLastFetch < 5000) {
+    if (lastInferencesFetch.current.key === fetchKey && lastInferencesFetch.current.timestamp > 0 && timeSinceLastFetch < 5000) {
       return
     }
     
@@ -95,15 +96,15 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
         setInferences(data)
         setInferencesError(null)
         setInferencesLoading(false)
-        setLastInferencesFetch({timestamp: Date.now(), key: fetchKey})
+        lastInferencesFetch.current = {timestamp: Date.now(), key: fetchKey}
       })
       .catch(err => {
         console.error('Failed to fetch participant inferences:', err)
         setInferencesError(err instanceof Error ? err.message : 'Unknown error')
         setInferencesLoading(false)
-        setLastInferencesFetch({timestamp: Date.now(), key: fetchKey})
+        lastInferencesFetch.current = {timestamp: Date.now(), key: fetchKey}
       })
-  }, [participant?.index, epochId, currentEpochId, lastInferencesFetch])
+  }, [participant?.index, epochId, currentEpochId])
   
   useEffect(() => {
     if (activeTab !== 'inferences') {
@@ -116,7 +117,7 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
     
     const fetchKey = `${participant.index}-${epochId}`
     const interval = setInterval(() => {
-      setLastInferencesFetch({timestamp: 0, key: fetchKey})
+      lastInferencesFetch.current = {timestamp: 0, key: fetchKey}
     }, 30000)
     
     return () => clearInterval(interval)

@@ -4,11 +4,13 @@ import { ParticipantModal } from './ParticipantModal'
 interface ParticipantTableProps {
   participants: Participant[]
   epochId: number
+  isCurrentEpoch: boolean
+  currentEpochId: number | null
   selectedParticipantId?: string | null
   onParticipantSelect: (participantId: string | null) => void
 }
 
-export function ParticipantTable({ participants, epochId, selectedParticipantId, onParticipantSelect }: ParticipantTableProps) {
+export function ParticipantTable({ participants, epochId, isCurrentEpoch, currentEpochId, selectedParticipantId, onParticipantSelect }: ParticipantTableProps) {
   const sortedParticipants = [...participants].sort((a, b) => b.weight - a.weight)
 
   const shouldHighlightRed = (participant: Participant) => {
@@ -163,6 +165,8 @@ export function ParticipantTable({ participants, epochId, selectedParticipantId,
       <ParticipantModal 
         participant={selectedParticipant}
         epochId={epochId}
+        isCurrentEpoch={isCurrentEpoch}
+        currentEpochId={currentEpochId}
         onClose={handleCloseModal} 
       />
     </div>

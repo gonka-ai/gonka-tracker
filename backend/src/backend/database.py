@@ -153,6 +153,32 @@ class CacheDB:
                 ON models(epoch_id)
             """)
             
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS participant_inferences (
+                    epoch_id INTEGER NOT NULL,
+                    participant_id TEXT NOT NULL,
+                    inference_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    start_block_height TEXT NOT NULL,
+                    start_block_timestamp TEXT NOT NULL,
+                    validated_by_json TEXT,
+                    prompt_hash TEXT,
+                    response_hash TEXT,
+                    prompt_payload TEXT,
+                    response_payload TEXT,
+                    prompt_token_count TEXT,
+                    completion_token_count TEXT,
+                    model TEXT,
+                    last_updated TEXT NOT NULL,
+                    PRIMARY KEY (epoch_id, participant_id, inference_id)
+                )
+            """)
+            
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_participant_inferences
+                ON participant_inferences(epoch_id, participant_id, status)
+            """)
+            
             await db.commit()
             logger.info(f"Database initialized at {self.db_path}")
     
@@ -717,4 +743,118 @@ class CacheDB:
                     })
                 
                 return results
+    
+    async def save_participant_inferences_batch(
+        self,
+        epoch_id: int,
+        participant_id: str,
+        inferences: List[Dict[str, Any]]
+    ):
+        last_updated = datetime.utcnow().isoformat()
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                DELETE FROM participant_inferences
+                WHERE epoch_id = ? AND participant_id = ?
+            """, (epoch_id, participant_id))
+            
+            if len(inferences) == 0:
+                await db.execute("""
+                    INSERT INTO participant_inferences 
+                    (epoch_id, participant_id, inference_id, status, start_block_height, 
+                     start_block_timestamp, validated_by_json, prompt_hash, response_hash,
+                     prompt_payload, response_payload, prompt_token_count, 
+                     completion_token_count, model, last_updated)
+                    VALUES (?, ?, NULL, '_EMPTY_MARKER_', '0', '0', '[]', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?)
+                """, (epoch_id, participant_id, last_updated))
+            else:
+                for inference in inferences:
+                    validated_by_json = json.dumps(inference.get("validated_by", []))
+                    
+                    await db.execute("""
+                        INSERT INTO participant_inferences 
+                        (epoch_id, participant_id, inference_id, status, start_block_height, 
+                         start_block_timestamp, validated_by_json, prompt_hash, response_hash,
+                         prompt_payload, response_payload, prompt_token_count, 
+                         completion_token_count, model, last_updated)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        epoch_id,
+                        participant_id,
+                        inference.get("inference_id"),
+                        inference.get("status"),
+                        inference.get("start_block_height"),
+                        inference.get("start_block_timestamp"),
+                        validated_by_json,
+                        inference.get("prompt_hash"),
+                        inference.get("response_hash"),
+                        inference.get("prompt_payload"),
+                        inference.get("response_payload"),
+                        inference.get("prompt_token_count"),
+                        inference.get("completion_token_count"),
+                        inference.get("model"),
+                        last_updated
+                    ))
+            
+            await db.commit()
+            logger.info(f"Saved {len(inferences)} inferences for participant {participant_id} in epoch {epoch_id}")
+    
+    async def get_participant_inferences(
+        self,
+        epoch_id: int,
+        participant_id: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            async with db.execute("""
+                SELECT inference_id, status, start_block_height, start_block_timestamp,
+                       validated_by_json, prompt_hash, response_hash, prompt_payload,
+                       response_payload, prompt_token_count, completion_token_count, model
+                FROM participant_inferences
+                WHERE epoch_id = ? AND participant_id = ?
+                ORDER BY start_block_timestamp DESC
+            """, (epoch_id, participant_id)) as cursor:
+                rows = await cursor.fetchall()
+                
+                if not rows:
+                    return None
+                
+                has_marker = any(row["status"] == "_EMPTY_MARKER_" for row in rows)
+                
+                results = []
+                for row in rows:
+                    try:
+                        if row["status"] == "_EMPTY_MARKER_":
+                            continue
+                        
+                        validated_by = []
+                        if row["validated_by_json"]:
+                            try:
+                                validated_by = json.loads(row["validated_by_json"])
+                            except json.JSONDecodeError as e:
+                                logger.warning(f"Invalid JSON in validated_by for inference {row['inference_id']}: {e}")
+                        
+                        results.append({
+                            "inference_id": row["inference_id"],
+                            "status": row["status"],
+                            "start_block_height": row["start_block_height"],
+                            "start_block_timestamp": row["start_block_timestamp"],
+                            "validated_by": validated_by,
+                            "prompt_hash": row["prompt_hash"],
+                            "response_hash": row["response_hash"],
+                            "prompt_payload": row["prompt_payload"],
+                            "response_payload": row["response_payload"],
+                            "prompt_token_count": row["prompt_token_count"],
+                            "completion_token_count": row["completion_token_count"],
+                            "model": row["model"]
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to parse inference record {row.get('inference_id', 'unknown')}: {e}")
+                        continue
+                
+                if has_marker and not results:
+                    return []
+                
+                return results if results else None
 

@@ -149,3 +149,27 @@ export interface ModelsResponse {
   is_current: boolean;
 }
 
+export interface InferenceDetail {
+  inference_id: string;
+  status: string;
+  start_block_height: string;
+  start_block_timestamp: string;
+  validated_by: string[];
+  prompt_hash?: string;
+  response_hash?: string;
+  prompt_payload?: string;
+  response_payload?: string;
+  prompt_token_count?: string;
+  completion_token_count?: string;
+  model?: string;
+}
+
+export interface ParticipantInferencesResponse {
+  epoch_id: number;
+  participant_id: string;
+  successful: InferenceDetail[];
+  expired: InferenceDetail[];
+  invalidated: InferenceDetail[];
+  cached_at?: string;
+}
+

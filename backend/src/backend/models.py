@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
@@ -14,6 +14,8 @@ class CurrentEpochStats(BaseModel):
 
 
 class ParticipantStats(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     index: str
     address: str
     weight: int
@@ -185,4 +187,28 @@ class ModelsResponse(BaseModel):
     stats: List[ModelStats]
     cached_at: str
     is_current: bool
+
+
+class InferenceDetail(BaseModel):
+    inference_id: str
+    status: str
+    start_block_height: str
+    start_block_timestamp: str
+    validated_by: List[str]
+    prompt_hash: Optional[str] = None
+    response_hash: Optional[str] = None
+    prompt_payload: Optional[str] = None
+    response_payload: Optional[str] = None
+    prompt_token_count: Optional[str] = None
+    completion_token_count: Optional[str] = None
+    model: Optional[str] = None
+
+
+class ParticipantInferencesResponse(BaseModel):
+    epoch_id: int
+    participant_id: str
+    successful: List[InferenceDetail]
+    expired: List[InferenceDetail]
+    invalidated: List[InferenceDetail]
+    cached_at: Optional[str] = None
 

@@ -1201,4 +1201,202 @@ class InferenceService:
             cached_at=datetime.utcnow().isoformat(),
             is_current=False
         )
+    
+    async def poll_participant_inferences(self):
+        try:
+            logger.info("Polling participant inferences")
+            
+            epoch_data = await self.client.get_current_epoch_participants()
+            current_epoch = epoch_data["active_participants"]["epoch_group_id"]
+            current_epoch_effective_height = epoch_data["active_participants"]["effective_block_height"]
+            participants = epoch_data["active_participants"]["participants"]
+            participant_indices = {p["index"] for p in participants}
+            
+            latest_epoch_info = await self.client.get_latest_epoch()
+            epoch_length = latest_epoch_info["epoch_params"]["epoch_length"]
+            
+            logger.info(f"Fetching all inferences (all epochs)")
+            all_inferences = await self.client.get_all_inferences()
+            logger.info(f"Fetched {len(all_inferences)} total inferences")
+            logger.info(f"Current epoch: {current_epoch}, effective_height: {current_epoch_effective_height}, epoch_length: {epoch_length}")
+            
+            fixed_epoch_count = 0
+            for inf in all_inferences:
+                if inf.get("epoch_id") == "0":
+                    start_height = int(inf.get("start_block_height", 0))
+                    if start_height > 0:
+                        if start_height >= current_epoch_effective_height:
+                            calculated_epoch = current_epoch
+                        else:
+                            blocks_before_current = current_epoch_effective_height - start_height
+                            epochs_back = (blocks_before_current + epoch_length - 1) // epoch_length
+                            calculated_epoch = current_epoch - epochs_back
+                        
+                        if inf.get("status") == "EXPIRED":
+                            logger.info(f"EXPIRED inference {inf.get('inference_id')}: start_height={start_height}, calculated_epoch={calculated_epoch}, assigned_to={inf.get('assigned_to')}")
+                        
+                        inf["epoch_id"] = str(calculated_epoch)
+                        fixed_epoch_count += 1
+            
+            if fixed_epoch_count > 0:
+                logger.info(f"Fixed epoch_id for {fixed_epoch_count} inferences with epoch_id='0'")
+            
+            epoch_distribution = {}
+            for inf in all_inferences:
+                eid = inf.get("epoch_id", "unknown")
+                epoch_distribution[eid] = epoch_distribution.get(eid, 0) + 1
+            logger.info(f"Epoch distribution before filtering: {epoch_distribution}")
+            
+            target_epochs = {str(current_epoch), str(current_epoch - 1)}
+            all_inferences = [inf for inf in all_inferences if inf.get("epoch_id") in target_epochs]
+            logger.info(f"After filtering by epochs {current_epoch} and {current_epoch - 1}: {len(all_inferences)} inferences")
+            
+            status_counts = {}
+            for inf in all_inferences:
+                status = inf.get("status", "UNKNOWN")
+                status_counts[status] = status_counts.get(status, 0) + 1
+            logger.info(f"Inference status distribution: {status_counts}")
+            
+            by_participant = {p["index"]: [] for p in participants}
+            
+            for inf in all_inferences:
+                assigned_to = inf.get("assigned_to")
+                if assigned_to:
+                    if assigned_to not in by_participant:
+                        by_participant[assigned_to] = []
+                    by_participant[assigned_to].append(inf)
+            
+            logger.info(f"Grouped inferences for {len(by_participant)} participants (including those with no inferences)")
+            
+            saved_count = 0
+            for participant_id, inferences in by_participant.items():
+                try:
+                    by_epoch = {}
+                    wrong_epoch_count = 0
+                    for inf in inferences:
+                        epoch_id = inf.get("epoch_id")
+                        if epoch_id not in target_epochs:
+                            wrong_epoch_count += 1
+                            continue
+                        
+                        status = inf.get("status", "")
+                        if status in ["FINISHED", "VALIDATED", "EXPIRED", "INVALIDATED"]:
+                            if epoch_id not in by_epoch:
+                                by_epoch[epoch_id] = []
+                            by_epoch[epoch_id].append(inf)
+                    
+                    if wrong_epoch_count > 0:
+                        logger.warning(f"Participant {participant_id}: filtered out {wrong_epoch_count} inferences with wrong epoch_id")
+                    
+                    for epoch_str in target_epochs:
+                        epoch_id = int(epoch_str)
+                        epoch_inferences = by_epoch.get(epoch_str, [])
+                        by_status = {
+                            "successful": [],
+                            "expired": [],
+                            "invalidated": []
+                        }
+                        
+                        for inf in epoch_inferences:
+                            status = inf.get("status", "")
+                            if status in ["FINISHED", "VALIDATED"]:
+                                by_status["successful"].append(inf)
+                            elif status == "EXPIRED":
+                                by_status["expired"].append(inf)
+                            elif status == "INVALIDATED":
+                                by_status["invalidated"].append(inf)
+                        
+                        for key in by_status:
+                            by_status[key] = sorted(
+                                by_status[key],
+                                key=lambda x: int(x.get("start_block_timestamp", 0)),
+                                reverse=True
+                            )[:10]
+                        
+                        to_save = by_status["successful"] + by_status["expired"] + by_status["invalidated"]
+                        
+                        await self.cache_db.save_participant_inferences_batch(
+                            epoch_id=int(epoch_id),
+                            participant_id=participant_id,
+                            inferences=to_save
+                        )
+                        saved_count += len(to_save)
+                        logger.info(f"Cached inferences for {participant_id} epoch {epoch_id}: {len(by_status['successful'])} successful, {len(by_status['expired'])} expired, {len(by_status['invalidated'])} invalidated")
+                    
+                except Exception as e:
+                    logger.debug(f"Failed to process inferences for {participant_id}: {e}")
+                    continue
+            
+            logger.info(f"Completed participant inferences polling: {saved_count} inferences cached for {len(by_participant)} participants across epochs {current_epoch} and {current_epoch - 1}")
+            
+        except Exception as e:
+            logger.error(f"Error polling participant inferences: {e}")
+    
+    async def get_participant_inferences_summary(
+        self,
+        epoch_id: int,
+        participant_id: str
+    ) -> Dict[str, Any]:
+        try:
+            cached_inferences = await self.cache_db.get_participant_inferences(
+                epoch_id=epoch_id,
+                participant_id=participant_id
+            )
+            
+            if cached_inferences is None:
+                logger.debug(f"No cached inferences for {participant_id} in epoch {epoch_id}, returning empty (cache-only mode)")
+                return {
+                    "epoch_id": epoch_id,
+                    "participant_id": participant_id,
+                    "successful": [],
+                    "expired": [],
+                    "invalidated": [],
+                    "cached_at": None
+                }
+            
+            successful = []
+            expired = []
+            invalidated = []
+            skipped_count = 0
+            
+            for inf in cached_inferences:
+                try:
+                    if not inf.get("inference_id") or not inf.get("status"):
+                        skipped_count += 1
+                        continue
+                    
+                    status = inf.get("status", "")
+                    if status in ["FINISHED", "VALIDATED"]:
+                        successful.append(inf)
+                    elif status == "EXPIRED":
+                        expired.append(inf)
+                    elif status == "INVALIDATED":
+                        invalidated.append(inf)
+                except Exception as e:
+                    logger.warning(f"Skipping invalid inference record for {participant_id}: {e}")
+                    skipped_count += 1
+                    continue
+            
+            if skipped_count > 0:
+                logger.warning(f"Skipped {skipped_count} invalid inference records for {participant_id} in epoch {epoch_id}")
+            
+            return {
+                "epoch_id": epoch_id,
+                "participant_id": participant_id,
+                "successful": successful[:10],
+                "expired": expired[:10],
+                "invalidated": invalidated[:10],
+                "cached_at": datetime.utcnow().isoformat() if cached_inferences else None
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting participant inferences summary for {participant_id} epoch {epoch_id}: {e}", exc_info=True)
+            return {
+                "epoch_id": epoch_id,
+                "participant_id": participant_id,
+                "successful": [],
+                "expired": [],
+                "invalidated": [],
+                "cached_at": None
+            }
 

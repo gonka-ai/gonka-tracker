@@ -376,4 +376,50 @@ class GonkaClient:
     
     async def get_models_stats(self) -> Dict[str, Any]:
         return await self._make_request("/chain-api/productscience/inference/inference/models_stats_by_time")
+    
+    async def get_all_inferences(
+        self, 
+        epoch_id: Optional[int] = None,
+        limit: int = 500
+    ) -> List[Dict[str, Any]]:
+        inferences = []
+        next_key = None
+        page_count = 0
+        total_fetched = 0
+        total_filtered = 0
+        
+        while True:
+            params = {"pagination.limit": str(limit)}
+            if next_key:
+                params["pagination.key"] = next_key
+            
+            result = await self._make_request(
+                "/chain-api/productscience/inference/inference/inference",
+                params=params
+            )
+            
+            batch = result.get("inference", [])
+            if not batch:
+                break
+            
+            page_count += 1
+            total_fetched += len(batch)
+            
+            if epoch_id is not None:
+                before_filter = len(batch)
+                batch = [inf for inf in batch if inf.get("epoch_id") == str(epoch_id) or inf.get("epoch_id") == "0"]
+                filtered_count = before_filter - len(batch)
+                total_filtered += filtered_count
+                logger.debug(f"Page {page_count}: fetched {before_filter}, kept {len(batch)} for epoch {epoch_id} (including epoch_id='0'), filtered {filtered_count}")
+            
+            inferences.extend(batch)
+            
+            pagination = result.get("pagination", {})
+            next_key = pagination.get("next_key")
+            
+            if not next_key:
+                break
+        
+        logger.info(f"Fetched {page_count} pages, {total_fetched} total inferences, {total_filtered} filtered, {len(inferences)} kept")
+        return inferences
 

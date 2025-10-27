@@ -346,6 +346,8 @@ function App() {
                 <ParticipantTable 
                   participants={data.participants} 
                   epochId={data.epoch_id}
+                  isCurrentEpoch={data.is_current}
+                  currentEpochId={currentEpochId}
                   selectedParticipantId={selectedParticipantId}
                   onParticipantSelect={handleParticipantSelect}
                 />

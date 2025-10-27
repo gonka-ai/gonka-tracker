@@ -295,6 +295,13 @@ export function Timeline() {
             const detailedBlockRange = detailedMaxBlock - detailedMinBlock
 
             const futureEvents: Array<{ block: number; label: string; fullLabel: string }> = []
+            if (data.epoch_stages?.set_new_validators && data.epoch_stages.set_new_validators > data.current_block.height && data.epoch_stages.set_new_validators <= detailedMaxBlock) {
+              futureEvents.push({
+                block: data.epoch_stages.set_new_validators,
+                label: "New Validators",
+                fullLabel: "Set New Validators"
+              })
+            }
             if (data.epoch_stages?.inference_validation_cutoff && data.epoch_stages.inference_validation_cutoff > data.current_block.height && data.epoch_stages.inference_validation_cutoff <= detailedMaxBlock) {
               futureEvents.push({
                 block: data.epoch_stages.inference_validation_cutoff,
@@ -328,8 +335,9 @@ export function Timeline() {
               }
             }
             
-            if (data.next_epoch_stages?.set_new_validators && data.epoch_length) {
-              const secondSetValidators = data.next_epoch_stages.set_new_validators + data.epoch_length
+            if (data.next_epoch_stages?.set_new_validators && data.next_epoch_stages?.next_poc_start && data.next_epoch_stages?.poc_start) {
+              const offset = data.next_epoch_stages.set_new_validators - data.next_epoch_stages.poc_start
+              const secondSetValidators = data.next_epoch_stages.next_poc_start + offset
               if (secondSetValidators > data.current_block.height && secondSetValidators <= detailedMaxBlock) {
                 futureEvents.push({
                   block: secondSetValidators,
@@ -337,6 +345,14 @@ export function Timeline() {
                   fullLabel: "Set New Validators (Epoch +2)"
                 })
               }
+            }
+            
+            if (data.next_epoch_stages?.inference_validation_cutoff && data.next_epoch_stages.inference_validation_cutoff > data.current_block.height && data.next_epoch_stages.inference_validation_cutoff <= detailedMaxBlock) {
+              futureEvents.push({
+                block: data.next_epoch_stages.inference_validation_cutoff,
+                label: "Val Cutoff",
+                fullLabel: "Inference Validation Cutoff (Next Epoch)"
+              })
             }
 
             const tickBlocks = []
@@ -351,6 +367,7 @@ export function Timeline() {
               milestoneBlocks.push(block)
             }
 
+            const currentEpochSetValidators = data.epoch_stages?.set_new_validators
             const validationCutoff = data.epoch_stages?.inference_validation_cutoff
             const setValidators = data.next_epoch_stages?.set_new_validators
 
@@ -379,6 +396,23 @@ export function Timeline() {
                   handleTimelineClick(block)
                 }}
               >
+                {(() => {
+                  const currentPocStart = data.current_epoch_start
+                  if (currentEpochSetValidators && currentEpochSetValidators >= detailedMinBlock && currentPocStart <= detailedMaxBlock) {
+                    return (
+                      <rect
+                        x={`${((Math.max(currentPocStart, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                        y="40"
+                        width={`${((Math.min(currentEpochSetValidators, detailedMaxBlock) - Math.max(currentPocStart, detailedMinBlock)) / detailedBlockRange) * 100}%`}
+                        height="200"
+                        fill="#FEE2E2"
+                        opacity="0.5"
+                      />
+                    )
+                  }
+                  return null
+                })()}
+
                 {validationCutoff && setValidators && setValidators >= detailedMinBlock && validationCutoff <= detailedMaxBlock && (
                   <rect
                     x={`${((Math.max(validationCutoff, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
@@ -389,6 +423,32 @@ export function Timeline() {
                     opacity="0.5"
                   />
                 )}
+
+                {(() => {
+                  const nextValidationCutoff = data.next_epoch_stages?.inference_validation_cutoff
+                  const nextPocStart = data.next_epoch_stages?.next_poc_start
+                  const nextSetValidators = data.next_epoch_stages?.set_new_validators
+                  const nextEpochPocStart = data.next_epoch_stages?.poc_start
+                  
+                  if (!nextValidationCutoff || !nextPocStart || !nextSetValidators || !nextEpochPocStart) return null
+                  
+                  const offset = nextSetValidators - nextEpochPocStart
+                  const secondSetValidators = nextPocStart + offset
+                  
+                  if (secondSetValidators >= detailedMinBlock && nextValidationCutoff <= detailedMaxBlock) {
+                    return (
+                      <rect
+                        x={`${((Math.max(nextValidationCutoff, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
+                        y="40"
+                        width={`${((Math.min(secondSetValidators, detailedMaxBlock) - Math.max(nextValidationCutoff, detailedMinBlock)) / detailedBlockRange) * 100}%`}
+                        height="200"
+                        fill="#FEE2E2"
+                        opacity="0.5"
+                      />
+                    )
+                  }
+                  return null
+                })()}
 
                 <line
                   x1="0"
@@ -475,15 +535,12 @@ export function Timeline() {
                   const totalInRow = sameRowEvents.length
                   
                   let textAnchor: "start" | "middle" | "end" = "middle"
-                  let xOffset = 0
                   
                   if (totalInRow > 1) {
                     if (indexInRow === 0) {
                       textAnchor = "end"
-                      xOffset = -5
                     } else if (indexInRow === totalInRow - 1) {
                       textAnchor = "start"
-                      xOffset = 5
                     }
                   } else {
                     if (position < 20) {
@@ -518,7 +575,7 @@ export function Timeline() {
                         fill="#3B82F6"
                       />
                       <text
-                        x={`calc(${position}% + ${xOffset}px)`}
+                        x={`${position}%`}
                         y={labelY}
                         textAnchor={textAnchor}
                         className="text-xs font-semibold"
@@ -527,7 +584,7 @@ export function Timeline() {
                         {event.label}
                       </text>
                       <text
-                        x={`calc(${position}% + ${xOffset}px)`}
+                        x={`${position}%`}
                         y={labelY + 12}
                         textAnchor={textAnchor}
                         className="text-xs"

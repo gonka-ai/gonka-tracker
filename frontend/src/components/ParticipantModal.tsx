@@ -1,15 +1,26 @@
 import { useEffect, useState } from 'react'
-import { Participant, ParticipantDetailsResponse } from '../types/inference'
+import { Participant, ParticipantDetailsResponse, ParticipantInferencesResponse, InferenceDetail } from '../types/inference'
+import { InferenceDetailModal } from './InferenceDetailModal'
 
 interface ParticipantModalProps {
   participant: Participant | null
   epochId: number
+  isCurrentEpoch: boolean
+  currentEpochId: number | null
   onClose: () => void
 }
 
-export function ParticipantModal({ participant, epochId, onClose }: ParticipantModalProps) {
+type TabType = 'details' | 'inferences'
+
+export function ParticipantModal({ participant, epochId, currentEpochId, onClose }: ParticipantModalProps) {
   const [details, setDetails] = useState<ParticipantDetailsResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [activeTab, setActiveTab] = useState<TabType>('details')
+  const [inferences, setInferences] = useState<ParticipantInferencesResponse | null>(null)
+  const [inferencesLoading, setInferencesLoading] = useState(false)
+  const [inferencesError, setInferencesError] = useState<string | null>(null)
+  const [selectedInference, setSelectedInference] = useState<InferenceDetail | null>(null)
+  const [lastInferencesFetch, setLastInferencesFetch] = useState<{timestamp: number, key: string}>({timestamp: 0, key: ''})
   
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -29,6 +40,10 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
       return
     }
     
+    setActiveTab('details')
+    setInferences(null)
+    setInferencesError(null)
+    setSelectedInference(null)
     setLoading(true)
     fetch(`/api/v1/participants/${participant.index}?epoch_id=${epochId}`)
       .then(res => {
@@ -47,6 +62,66 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
       })
   }, [participant?.index, epochId])
 
+  useEffect(() => {
+    if (!participant) {
+      return
+    }
+    
+    if (!currentEpochId || epochId < currentEpochId - 1) {
+      return
+    }
+    
+    const fetchKey = `${participant.index}-${epochId}`
+    const now = Date.now()
+    const timeSinceLastFetch = now - lastInferencesFetch.timestamp
+    
+    if (lastInferencesFetch.key === fetchKey && lastInferencesFetch.timestamp > 0 && timeSinceLastFetch < 5000) {
+      return
+    }
+    
+    if (!inferences || inferences.epoch_id !== epochId || inferences.participant_id !== participant.index) {
+      setInferencesLoading(true)
+    }
+    setInferencesError(null)
+    
+    fetch(`/api/v1/participants/${participant.index}/inferences?epoch_id=${epochId}`)
+      .then(res => {
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`)
+        }
+        return res.json()
+      })
+      .then(data => {
+        setInferences(data)
+        setInferencesError(null)
+        setInferencesLoading(false)
+        setLastInferencesFetch({timestamp: Date.now(), key: fetchKey})
+      })
+      .catch(err => {
+        console.error('Failed to fetch participant inferences:', err)
+        setInferencesError(err instanceof Error ? err.message : 'Unknown error')
+        setInferencesLoading(false)
+        setLastInferencesFetch({timestamp: Date.now(), key: fetchKey})
+      })
+  }, [participant?.index, epochId, currentEpochId, lastInferencesFetch])
+  
+  useEffect(() => {
+    if (activeTab !== 'inferences') {
+      return
+    }
+    
+    if (!participant || !currentEpochId || epochId < currentEpochId - 1) {
+      return
+    }
+    
+    const fetchKey = `${participant.index}-${epochId}`
+    const interval = setInterval(() => {
+      setLastInferencesFetch({timestamp: 0, key: fetchKey})
+    }, 30000)
+    
+    return () => clearInterval(interval)
+  }, [activeTab, participant?.index, currentEpochId, epochId])
+
   if (!participant) {
     return null
   }
@@ -64,7 +139,7 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
         onClick={(e) => e.stopPropagation()}
       >
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-semibold text-gray-900">Participant Details</h2>
+          <h2 className="text-xl font-semibold text-gray-900">Participant</h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
@@ -73,7 +148,33 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
           </button>
         </div>
 
-        <div className="px-6 py-4 space-y-6">
+        <div className="border-b border-gray-200 bg-white sticky top-[73px]">
+          <nav className="flex space-x-4 px-6">
+            <button
+              onClick={() => setActiveTab('details')}
+              className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'details'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Details
+            </button>
+            <button
+              onClick={() => setActiveTab('inferences')}
+              className={`py-3 px-4 text-sm font-medium border-b-2 transition-colors ${
+                activeTab === 'inferences'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              Inferences
+            </button>
+          </nav>
+        </div>
+
+        {activeTab === 'details' && (
+          <div className="px-6 py-4 space-y-6">
           <div className="space-y-4">
             <div>
               <label className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Participant Address</label>
@@ -417,8 +518,155 @@ export function ParticipantModal({ participant, epochId, onClose }: ParticipantM
               <div className="text-gray-400 text-sm">No MLNodes configured</div>
             )}
           </div>
-        </div>
+          </div>
+        )}
+
+        {activeTab === 'inferences' && (
+          <div className="px-6 py-4 space-y-6">
+            {(!currentEpochId || epochId < currentEpochId - 1) ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-base font-medium">Data not available for older epochs</p>
+                <p className="text-sm text-gray-400 mt-2">Inference details are only available for current and previous epoch</p>
+              </div>
+            ) : inferencesLoading ? (
+              <div className="text-center py-8 text-gray-400">Loading inferences...</div>
+            ) : inferencesError ? (
+              <div className="text-center py-8 text-red-500">
+                <p className="text-base font-medium">Failed to load inferences</p>
+                <p className="text-sm text-gray-400 mt-2">{inferencesError}</p>
+              </div>
+            ) : !inferences ? (
+              <div className="text-center py-8 text-gray-400">No data available</div>
+            ) : !inferences.cached_at ? (
+              <div className="text-center py-12 text-gray-500">
+                <p className="text-base font-medium">Inference data not yet available</p>
+                <p className="text-sm text-gray-400 mt-2">Backend is collecting data. Please wait a few moments and refresh.</p>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
+                    Successful (Top 10)
+                  </h3>
+                  {inferences.successful.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Inference ID</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Block Height</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Validated By</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {inferences.successful.map((inf) => (
+                            <tr 
+                              key={inf.inference_id} 
+                              className="hover:bg-gray-50 cursor-pointer"
+                              onClick={() => setSelectedInference(inf)}
+                            >
+                              <td className="px-4 py-2 text-sm font-mono text-gray-700 truncate max-w-xs">
+                                {inf.inference_id}
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-900">{inf.start_block_height}</td>
+                              <td className="px-4 py-2 text-sm text-gray-900">{inf.validated_by.length}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-400 bg-gray-50 p-4 rounded">No successful inferences</div>
+                  )}
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
+                    Expired (Top 10)
+                  </h3>
+                  {inferences.expired.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Inference ID</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Block Height</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Validated By</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {inferences.expired.map((inf) => (
+                            <tr 
+                              key={inf.inference_id} 
+                              className="hover:bg-gray-50 cursor-pointer"
+                              onClick={() => setSelectedInference(inf)}
+                            >
+                              <td className="px-4 py-2 text-sm font-mono text-gray-700 truncate max-w-xs">
+                                {inf.inference_id}
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-900">{inf.start_block_height}</td>
+                              <td className="px-4 py-2 text-sm text-gray-900">{inf.validated_by.length}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-400 bg-gray-50 p-4 rounded">No expired inferences</div>
+                  )}
+                </div>
+
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wider mb-3">
+                    Invalidated (Top 10)
+                  </h3>
+                  {inferences.invalidated.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Inference ID</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Block Height</th>
+                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Validated By</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {inferences.invalidated.map((inf) => (
+                            <tr 
+                              key={inf.inference_id} 
+                              className="hover:bg-gray-50 cursor-pointer"
+                              onClick={() => setSelectedInference(inf)}
+                            >
+                              <td className="px-4 py-2 text-sm font-mono text-gray-700 truncate max-w-xs">
+                                {inf.inference_id}
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-900">{inf.start_block_height}</td>
+                              <td className="px-4 py-2 text-sm text-gray-900">{inf.validated_by.length}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-gray-400 bg-gray-50 p-4 rounded">No invalidated inferences</div>
+                  )}
+                </div>
+
+                {inferences.cached_at && (
+                  <div className="text-xs text-gray-400 text-right pt-4 border-t border-gray-200">
+                    Cached at: {new Date(inferences.cached_at).toLocaleString()}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
+
+      <InferenceDetailModal 
+        inference={selectedInference}
+        onClose={() => setSelectedInference(null)}
+      />
     </div>
   )
 }

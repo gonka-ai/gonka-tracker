@@ -1,50 +1,41 @@
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ModelsResponse, ModelInfo } from '../types/inference'
 import { EpochSelector } from './EpochSelector'
 import { ModelModal } from './ModelModal'
 
 export function Models() {
-  const [data, setData] = useState<ModelsResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>('')
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
   const [currentEpochId, setCurrentEpochId] = useState<number | null>(null)
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
-  const [autoRefreshCountdown, setAutoRefreshCountdown] = useState(30)
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
 
-  const fetchData = async (epochId: number | null = null, isAutoRefresh = false) => {
-    if (!isAutoRefresh) {
-      setLoading(true)
-    }
-    setError('')
-
-    try {
-      const endpoint = epochId
-        ? `${apiUrl}/v1/models/epochs/${epochId}`
-        : `${apiUrl}/v1/models/current`
-      
-      const response = await fetch(endpoint)
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      
-      const result = await response.json()
-      setData(result)
-      
-      if (result.is_current) {
-        setCurrentEpochId(result.epoch_id)
-      }
-      
-      setAutoRefreshCountdown(30)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch data')
-    } finally {
-      setLoading(false)
-    }
+  const fetchModels = async (epochId: number | null) => {
+    const endpoint = epochId
+      ? `${apiUrl}/v1/models/epochs/${epochId}`
+      : `${apiUrl}/v1/models/current`
+    const response = await fetch(endpoint)
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    return response.json()
   }
+
+  const { data, isLoading: loading, error: queryError, refetch } = useQuery<ModelsResponse>({
+    queryKey: ['models', selectedEpochId === null ? 'current' : selectedEpochId],
+    queryFn: () => fetchModels(selectedEpochId),
+    staleTime: 30000,
+    refetchInterval: 30000,
+    refetchOnMount: true,
+    placeholderData: (previousData) => previousData,
+  })
+
+  const error = queryError ? (queryError as Error).message : ''
+
+  useEffect(() => {
+    if (data?.is_current) {
+      setCurrentEpochId(data.epoch_id)
+    }
+  }, [data])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -65,13 +56,9 @@ export function Models() {
     if (modelParam) {
       setSelectedModelId(modelParam)
     }
-    
-    fetchData(null)
   }, [])
 
   useEffect(() => {
-    fetchData(selectedEpochId)
-    
     const params = new URLSearchParams(window.location.search)
     params.set('page', 'models')
     
@@ -87,24 +74,8 @@ export function Models() {
     window.history.replaceState({}, '', newUrl)
   }, [selectedEpochId])
 
-  useEffect(() => {
-    if (selectedEpochId !== null) return
-
-    const interval = setInterval(() => {
-      setAutoRefreshCountdown((prev) => {
-        if (prev <= 1) {
-          fetchData(null, true)
-          return 30
-        }
-        return prev - 1
-      })
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [selectedEpochId])
-
   const handleRefresh = () => {
-    fetchData(selectedEpochId)
+    refetch()
   }
 
   const handleEpochSelect = (epochId: number | null) => {
@@ -204,7 +175,7 @@ export function Models() {
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
           <div className="flex-1 flex items-center justify-center sm:justify-start">
             {selectedEpochId === null && (
-              <span className="text-xs text-gray-500">Auto-refresh in {autoRefreshCountdown}s</span>
+              <span className="text-xs text-gray-500">Auto-refreshing every 30s</span>
             )}
           </div>
           <div className="flex items-center gap-3">

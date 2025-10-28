@@ -1,10 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { TimelineResponse } from '../types/inference'
 
 export function Timeline() {
-  const [data, setData] = useState<TimelineResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>('')
   const [hoveredBlock, setHoveredBlock] = useState<number | null>(null)
   const [hoveredEpoch, setHoveredEpoch] = useState<number | null>(null)
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null)
@@ -12,83 +10,61 @@ export function Timeline() {
   const [urlBlock, setUrlBlock] = useState<number | null>(null)
   const [currentTime, setCurrentTime] = useState(Date.now())
   const detailedTimelineRef = useRef<HTMLDivElement>(null)
-  const lastFetchRef = useRef<number>(0)
-  const dataFetchTimeRef = useRef<string>('')
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
-  const FETCH_INTERVAL = 180000
+
+  const { data, isLoading: loading, error: queryError } = useQuery<TimelineResponse>({
+    queryKey: ['timeline'],
+    queryFn: async () => {
+      const response = await fetch(`${apiUrl}/v1/timeline`)
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+      return response.json()
+    },
+    staleTime: 180000,
+    refetchInterval: 180000,
+    refetchOnMount: true,
+    placeholderData: (previousData) => previousData,
+  })
+
+  const error = queryError ? (queryError as Error).message : ''
 
   useEffect(() => {
-    const fetchTimeline = async () => {
-      const now = Date.now()
-      
-      if (lastFetchRef.current > 0 && now - lastFetchRef.current < FETCH_INTERVAL) {
-        return
-      }
-      
-      setLoading(true)
-      setError('')
+    if (!data) return
 
-      try {
-        const response = await fetch(`${apiUrl}/v1/timeline`)
+    const params = new URLSearchParams(window.location.search)
+    const blockParam = params.get('block')
+    const heightParam = params.get('height')
+    
+    const detailedMinBlock = data.current_block.height
+    const detailedMaxBlock = data.current_block.height + data.epoch_length
+    
+    if (blockParam) {
+      const blockHeight = parseInt(blockParam)
+      if (!isNaN(blockHeight)) {
+        setHoveredBlock(blockHeight)
+        setUrlBlock(blockHeight)
         
-        if (!response.ok) {
-          throw new Error(`HTTP error! status: ${response.status}`)
+        if (blockHeight >= detailedMinBlock && blockHeight <= detailedMaxBlock) {
+          setTimeout(() => {
+            detailedTimelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }, 100)
         }
-        
-        const result = await response.json()
-        setData(result)
-        lastFetchRef.current = now
-        dataFetchTimeRef.current = new Date(result.current_block.timestamp).toLocaleString()
-        
-        const params = new URLSearchParams(window.location.search)
-        const blockParam = params.get('block')
-        const heightParam = params.get('height')
-        
-        const detailedMinBlock = result.current_block.height
-        const detailedMaxBlock = result.current_block.height + result.epoch_length
-        
-        if (blockParam) {
-          const blockHeight = parseInt(blockParam)
-          if (!isNaN(blockHeight)) {
-            setHoveredBlock(blockHeight)
-            setUrlBlock(blockHeight)
-            
-            if (blockHeight >= detailedMinBlock && blockHeight <= detailedMaxBlock) {
-              setTimeout(() => {
-                detailedTimelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }, 100)
-            }
-          }
-        }
-        
-        if (heightParam) {
-          const height = parseInt(heightParam)
-          if (!isNaN(height)) {
-            setTargetHeight(height)
-            
-            if (height >= detailedMinBlock && height <= detailedMaxBlock) {
-              setTimeout(() => {
-                detailedTimelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-              }, 100)
-            }
-          }
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch timeline data')
-      } finally {
-        setLoading(false)
       }
     }
-
-    fetchTimeline()
     
-    const intervalId = setInterval(() => {
-      fetchTimeline()
-    }, FETCH_INTERVAL)
-    
-    return () => clearInterval(intervalId)
-  }, [apiUrl, FETCH_INTERVAL])
+    if (heightParam) {
+      const height = parseInt(heightParam)
+      if (!isNaN(height)) {
+        setTargetHeight(height)
+        
+        if (height >= detailedMinBlock && height <= detailedMaxBlock) {
+          setTimeout(() => {
+            detailedTimelineRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          }, 100)
+        }
+      }
+    }
+  }, [data])
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -214,7 +190,7 @@ export function Timeline() {
       <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
         <div className="flex items-center justify-between mb-2">
           <div className="text-xs text-gray-500">
-            Data cached at {dataFetchTimeRef.current} (refreshes every 3 min)
+            Auto-refreshing every 3 minutes
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">

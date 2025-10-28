@@ -1,56 +1,49 @@
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { InferenceResponse } from './types/inference'
 import { ParticipantTable } from './components/ParticipantTable'
 import { EpochSelector } from './components/EpochSelector'
 import { Timeline } from './components/Timeline'
 import { Models } from './components/Models'
 import { EpochTimer } from './components/EpochTimer'
+import { usePrefetch } from './hooks/usePrefetch'
 
 type Page = 'dashboard' | 'models' | 'timeline'
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard')
-  const [data, setData] = useState<InferenceResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>('')
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
   const [currentEpochId, setCurrentEpochId] = useState<number | null>(null)
   const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
-  const [autoRefreshCountdown, setAutoRefreshCountdown] = useState(30)
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
+  const { prefetchAll } = usePrefetch()
 
-  const fetchData = async (epochId: number | null = null, isAutoRefresh = false) => {
-    if (!isAutoRefresh) {
-      setLoading(true)
-    }
-    setError('')
-
-    try {
-      const endpoint = epochId
-        ? `${apiUrl}/v1/inference/epochs/${epochId}`
-        : `${apiUrl}/v1/inference/current`
-      
-      const response = await fetch(endpoint)
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-      
-      const result = await response.json()
-      setData(result)
-      
-      if (result.is_current) {
-        setCurrentEpochId(result.epoch_id)
-      }
-      
-      setAutoRefreshCountdown(30)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch data')
-    } finally {
-      setLoading(false)
-    }
+  const fetchInference = async (epochId: number | null) => {
+    const endpoint = epochId
+      ? `${apiUrl}/v1/inference/epochs/${epochId}`
+      : `${apiUrl}/v1/inference/current`
+    const response = await fetch(endpoint)
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    return response.json()
   }
+
+  const { data, isLoading: loading, error: queryError, refetch } = useQuery<InferenceResponse>({
+    queryKey: ['inference', selectedEpochId === null ? 'current' : selectedEpochId],
+    queryFn: () => fetchInference(selectedEpochId),
+    staleTime: 0,
+    refetchInterval: 30000,
+    refetchOnMount: true,
+    enabled: currentPage === 'dashboard',
+  })
+
+  const error = queryError ? (queryError as Error).message : ''
+
+  useEffect(() => {
+    if (data?.is_current) {
+      setCurrentEpochId(data.epoch_id)
+    }
+  }, [data])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -82,13 +75,9 @@ function App() {
     if (participantParam) {
       setSelectedParticipantId(participantParam)
     }
-    
-    fetchData(null)
   }, [])
 
   useEffect(() => {
-    fetchData(selectedEpochId)
-    
     const params = new URLSearchParams(window.location.search)
     if (selectedEpochId === null) {
       params.delete('epoch')
@@ -103,23 +92,13 @@ function App() {
   }, [selectedEpochId])
 
   useEffect(() => {
-    if (selectedEpochId !== null) return
-
-    const interval = setInterval(() => {
-      setAutoRefreshCountdown((prev) => {
-        if (prev <= 1) {
-          fetchData(null, true)
-          return 30
-        }
-        return prev - 1
-      })
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [selectedEpochId])
+    if (currentPage === 'dashboard' && data) {
+      prefetchAll()
+    }
+  }, [currentPage, data, prefetchAll])
 
   const handleRefresh = () => {
-    fetchData(selectedEpochId)
+    refetch()
   }
 
   const handleEpochSelect = (epochId: number | null) => {
@@ -313,7 +292,7 @@ function App() {
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
                   <div className="flex-1 flex items-center justify-center sm:justify-start">
                     {selectedEpochId === null && (
-                      <span className="text-xs text-gray-500">Auto-refresh in {autoRefreshCountdown}s</span>
+                      <span className="text-xs text-gray-500">Auto-refreshing every 30s</span>
                     )}
                   </div>
                   <div className="flex items-center gap-3">

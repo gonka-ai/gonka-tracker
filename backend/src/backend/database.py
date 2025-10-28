@@ -154,6 +154,22 @@ class CacheDB:
             """)
             
             await db.execute("""
+                CREATE TABLE IF NOT EXISTS models_api_cache (
+                    epoch_id INTEGER NOT NULL,
+                    height INTEGER NOT NULL,
+                    models_all_json TEXT NOT NULL,
+                    models_stats_json TEXT NOT NULL,
+                    cached_at TEXT NOT NULL,
+                    PRIMARY KEY (epoch_id, height)
+                )
+            """)
+            
+            await db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_models_api_epoch
+                ON models_api_cache(epoch_id)
+            """)
+            
+            await db.execute("""
                 CREATE TABLE IF NOT EXISTS participant_inferences (
                     epoch_id INTEGER NOT NULL,
                     participant_id TEXT NOT NULL,
@@ -857,4 +873,62 @@ class CacheDB:
                     return []
                 
                 return results if results else None
+    
+    async def save_models_api_cache(
+        self,
+        epoch_id: int,
+        height: int,
+        models_all: Dict[str, Any],
+        models_stats: Dict[str, Any]
+    ):
+        cached_at = datetime.utcnow().isoformat()
+        models_all_json = json.dumps(models_all)
+        models_stats_json = json.dumps(models_stats)
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("""
+                INSERT OR REPLACE INTO models_api_cache 
+                (epoch_id, height, models_all_json, models_stats_json, cached_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (epoch_id, height, models_all_json, models_stats_json, cached_at))
+            await db.commit()
+            logger.info(f"Cached models API data for epoch {epoch_id} at height {height}")
+    
+    async def get_models_api_cache(
+        self,
+        epoch_id: int,
+        height: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            if height is not None:
+                query = """
+                    SELECT models_all_json, models_stats_json, cached_at, height
+                    FROM models_api_cache
+                    WHERE epoch_id = ? AND height = ?
+                """
+                params = (epoch_id, height)
+            else:
+                query = """
+                    SELECT models_all_json, models_stats_json, cached_at, height
+                    FROM models_api_cache
+                    WHERE epoch_id = ?
+                    ORDER BY height DESC
+                    LIMIT 1
+                """
+                params = (epoch_id,)
+            
+            async with db.execute(query, params) as cursor:
+                row = await cursor.fetchone()
+                
+                if not row:
+                    return None
+                
+                return {
+                    "models_all": json.loads(row["models_all_json"]),
+                    "models_stats": json.loads(row["models_stats_json"]),
+                    "cached_at": row["cached_at"],
+                    "cached_height": row["height"]
+                }
 

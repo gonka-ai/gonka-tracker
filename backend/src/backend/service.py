@@ -1068,10 +1068,23 @@ class InferenceService:
             
             cached_models = models_to_cache
         
-        models_stats_data = await self.client.get_models_stats()
-        stats_list = models_stats_data.get("stats_models", [])
+        cached_api_data = await self.cache_db.get_models_api_cache(epoch_id)
         
-        models_all_data = await self.client.get_models_all()
+        if cached_api_data:
+            cached_height = cached_api_data.get("cached_height", "unknown")
+            logger.info(f"Using cached models API data for epoch {epoch_id} (cached at height {cached_height}, current height {height})")
+            models_all_data = cached_api_data["models_all"]
+            models_stats_data = cached_api_data["models_stats"]
+        else:
+            logger.info(f"Fetching fresh models API data for epoch {epoch_id} at height {height}")
+            models_all_data = await self.client.get_models_all()
+            models_stats_data = await self.client.get_models_stats()
+            
+            await self.cache_db.save_models_api_cache(
+                epoch_id, height, models_all_data, models_stats_data
+            )
+        
+        stats_list = models_stats_data.get("stats_models", [])
         models_list = models_all_data.get("model", [])
         
         models_dict = {m["id"]: m for m in models_list}
@@ -1157,10 +1170,22 @@ class InferenceService:
             
             cached_models = models_to_cache
         
-        models_stats_data = await self.client.get_models_stats()
-        stats_list = models_stats_data.get("stats_models", [])
+        cached_api_data = await self.cache_db.get_models_api_cache(epoch_id, target_height)
         
-        models_all_data = await self.client.get_models_all()
+        if cached_api_data:
+            logger.info(f"Using cached models API data for historical epoch {epoch_id} at height {target_height}")
+            models_all_data = cached_api_data["models_all"]
+            models_stats_data = cached_api_data["models_stats"]
+        else:
+            logger.info(f"Fetching fresh models API data for historical epoch {epoch_id} at height {target_height}")
+            models_all_data = await self.client.get_models_all()
+            models_stats_data = await self.client.get_models_stats()
+            
+            await self.cache_db.save_models_api_cache(
+                epoch_id, target_height, models_all_data, models_stats_data
+            )
+        
+        stats_list = models_stats_data.get("stats_models", [])
         models_list = models_all_data.get("model", [])
         
         models_dict = {m["id"]: m for m in models_list}
@@ -1399,4 +1424,23 @@ class InferenceService:
                 "invalidated": [],
                 "cached_at": None
             }
+    
+    async def poll_models_api_cache(self):
+        try:
+            logger.info("Polling models API cache")
+            
+            epoch_data = await self.client.get_current_epoch_participants()
+            epoch_id = epoch_data["active_participants"]["epoch_group_id"]
+            height = await self.client.get_latest_height()
+            
+            models_all_data = await self.client.get_models_all()
+            models_stats_data = await self.client.get_models_stats()
+            
+            await self.cache_db.save_models_api_cache(
+                epoch_id, height, models_all_data, models_stats_data
+            )
+            logger.info(f"Cached models API data for current epoch {epoch_id} at height {height}")
+            
+        except Exception as e:
+            logger.error(f"Error polling models API cache: {e}")
 

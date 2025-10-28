@@ -1,4 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Participant, ParticipantDetailsResponse, ParticipantInferencesResponse, InferenceDetail } from '../types/inference'
 import { InferenceDetailModal } from './InferenceDetailModal'
 
@@ -13,14 +14,37 @@ interface ParticipantModalProps {
 type TabType = 'details' | 'inferences'
 
 export function ParticipantModal({ participant, epochId, currentEpochId, onClose }: ParticipantModalProps) {
-  const [details, setDetails] = useState<ParticipantDetailsResponse | null>(null)
-  const [loading, setLoading] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('details')
-  const [inferences, setInferences] = useState<ParticipantInferencesResponse | null>(null)
-  const [inferencesLoading, setInferencesLoading] = useState(false)
-  const [inferencesError, setInferencesError] = useState<string | null>(null)
   const [selectedInference, setSelectedInference] = useState<InferenceDetail | null>(null)
-  const lastInferencesFetch = useRef<{timestamp: number, key: string}>({timestamp: 0, key: ''})
+
+  const { data: details, isLoading: loading } = useQuery<ParticipantDetailsResponse>({
+    queryKey: ['participant', participant?.index, epochId],
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/participants/${participant!.index}?epoch_id=${epochId}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json()
+    },
+    enabled: !!participant,
+    staleTime: 60000,
+  })
+
+  const { 
+    data: inferences, 
+    isLoading: inferencesLoading, 
+    error: inferencesQueryError 
+  } = useQuery<ParticipantInferencesResponse>({
+    queryKey: ['participant-inferences', participant?.index, epochId],
+    queryFn: async () => {
+      const res = await fetch(`/api/v1/participants/${participant!.index}/inferences?epoch_id=${epochId}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return res.json()
+    },
+    enabled: !!participant && !!currentEpochId && epochId >= currentEpochId - 1,
+    staleTime: 60000,
+    refetchInterval: false,
+  })
+
+  const inferencesError = inferencesQueryError ? (inferencesQueryError as Error).message : null
   
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -36,92 +60,11 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
   }, [onClose])
   
   useEffect(() => {
-    if (!participant) {
-      return
+    if (participant) {
+      setActiveTab('details')
+      setSelectedInference(null)
     }
-    
-    setActiveTab('details')
-    setInferences(null)
-    setInferencesError(null)
-    setSelectedInference(null)
-    lastInferencesFetch.current = {timestamp: 0, key: ''}
-    setLoading(true)
-    fetch(`/api/v1/participants/${participant.index}?epoch_id=${epochId}`)
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        return res.json()
-      })
-      .then(data => {
-        setDetails(data)
-        setLoading(false)
-      })
-      .catch(err => {
-        console.error('Failed to fetch participant details:', err)
-        setLoading(false)
-      })
   }, [participant?.index, epochId])
-
-  useEffect(() => {
-    if (!participant) {
-      return
-    }
-    
-    if (!currentEpochId || epochId < currentEpochId - 1) {
-      return
-    }
-    
-    const fetchKey = `${participant.index}-${epochId}`
-    const now = Date.now()
-    const timeSinceLastFetch = now - lastInferencesFetch.current.timestamp
-    
-    if (lastInferencesFetch.current.key === fetchKey && lastInferencesFetch.current.timestamp > 0 && timeSinceLastFetch < 5000) {
-      return
-    }
-    
-    if (!inferences || inferences.epoch_id !== epochId || inferences.participant_id !== participant.index) {
-      setInferencesLoading(true)
-    }
-    setInferencesError(null)
-    
-    fetch(`/api/v1/participants/${participant.index}/inferences?epoch_id=${epochId}`)
-      .then(res => {
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`)
-        }
-        return res.json()
-      })
-      .then(data => {
-        setInferences(data)
-        setInferencesError(null)
-        setInferencesLoading(false)
-        lastInferencesFetch.current = {timestamp: Date.now(), key: fetchKey}
-      })
-      .catch(err => {
-        console.error('Failed to fetch participant inferences:', err)
-        setInferencesError(err instanceof Error ? err.message : 'Unknown error')
-        setInferencesLoading(false)
-        lastInferencesFetch.current = {timestamp: Date.now(), key: fetchKey}
-      })
-  }, [participant?.index, epochId, currentEpochId])
-  
-  useEffect(() => {
-    if (activeTab !== 'inferences') {
-      return
-    }
-    
-    if (!participant || !currentEpochId || epochId < currentEpochId - 1) {
-      return
-    }
-    
-    const fetchKey = `${participant.index}-${epochId}`
-    const interval = setInterval(() => {
-      lastInferencesFetch.current = {timestamp: 0, key: fetchKey}
-    }, 30000)
-    
-    return () => clearInterval(interval)
-  }, [activeTab, participant?.index, currentEpochId, epochId])
 
   if (!participant) {
     return null

@@ -13,7 +13,7 @@ export function usePrefetch() {
         if (!response.ok) throw new Error('Failed to fetch timeline')
         return response.json()
       },
-      staleTime: 3 * 60 * 1000,
+      staleTime: 30000,
     })
   }
 

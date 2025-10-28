@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { TimelineResponse } from '../types/inference'
+import { useEstimatedBlock } from '../hooks/useEstimatedBlock'
 
 export function Timeline() {
   const [hoveredBlock, setHoveredBlock] = useState<number | null>(null)
@@ -8,20 +9,20 @@ export function Timeline() {
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null)
   const [targetHeight, setTargetHeight] = useState<number | null>(null)
   const [urlBlock, setUrlBlock] = useState<number | null>(null)
-  const [currentTime, setCurrentTime] = useState(Date.now())
   const detailedTimelineRef = useRef<HTMLDivElement>(null)
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
 
-  const { data, isLoading: loading, error: queryError } = useQuery<TimelineResponse>({
+  const { data, isLoading: loading, error: queryError, dataUpdatedAt } = useQuery<TimelineResponse>({
     queryKey: ['timeline'],
     queryFn: async () => {
       const response = await fetch(`${apiUrl}/v1/timeline`)
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
       return response.json()
     },
-    staleTime: 180000,
-    refetchInterval: 180000,
+    staleTime: 60000,
+    refetchInterval: 60000,
+    refetchIntervalInBackground: true,
     refetchOnMount: true,
     placeholderData: (previousData) => previousData,
   })
@@ -66,23 +67,27 @@ export function Timeline() {
     }
   }, [data])
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentTime(Date.now())
-    }, 1000)
+  const estimatedCurrentBlock = useEstimatedBlock(
+    data?.current_block.height || 0,
+    data?.current_block.timestamp || new Date().toISOString(),
+    data?.avg_block_time || 6
+  )
 
-    return () => clearInterval(interval)
-  }, [data])
+  const getEstimatedCurrentBlock = (): number => {
+    return data ? estimatedCurrentBlock : 0
+  }
 
   const calculateBlockTime = (blockHeight: number): { utc: string; local: string } => {
     if (!data) return { utc: '', local: '' }
 
-    const currentHeight = data.current_block.height
-    const currentTime = new Date(data.current_block.timestamp).getTime()
+    const currentHeight = getEstimatedCurrentBlock()
+    const blockTimestamp = new Date(data.current_block.timestamp).getTime()
+    const currentTime = Date.now()
+    const elapsedSinceBlock = currentTime - blockTimestamp
     const blockDiff = blockHeight - currentHeight
     const timeDiff = blockDiff * data.avg_block_time * 1000
 
-    const estimatedTime = new Date(currentTime + timeDiff)
+    const estimatedTime = new Date(blockTimestamp + elapsedSinceBlock + timeDiff)
     const options: Intl.DateTimeFormatOptions = {
       year: 'numeric',
       month: 'short',
@@ -187,36 +192,61 @@ export function Timeline() {
 
   return (
     <div className="space-y-6">
-      <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-        <div className="flex items-center justify-between mb-2">
-          <div className="text-xs text-gray-500">
-            Auto-refreshing every 3 minutes
+      <div className="bg-white rounded-lg shadow-sm p-4 md:p-6 border border-gray-200">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-4">
+          <div className="col-span-2 sm:col-span-1">
+            <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Epoch ID</div>
+            <div className="flex items-center gap-2 min-h-[2rem]">
+              <span className="text-2xl font-bold text-gray-900 leading-none">
+                {data.current_epoch_index}
+              </span>
+              <span className="px-2.5 py-0.5 text-xs font-semibold bg-gray-900 text-white rounded">
+                CURRENT
+              </span>
+            </div>
+          </div>
+
+          <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
+            <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Current Block</div>
+            <div>
+              <div className="text-2xl font-bold text-gray-900 leading-none">
+                {getEstimatedCurrentBlock().toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]">
+                Last confirmed: {data.current_block.height.toLocaleString()}
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
+            <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Avg Block Time</div>
+            <div>
+              <div className="text-2xl font-bold text-gray-900 leading-none">
+                {data.avg_block_time.toFixed(2)}s
+              </div>
+              <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]"></div>
+            </div>
+          </div>
+
+          <div className="border-t lg:border-t-0 lg:border-l border-gray-200 pt-4 lg:pt-0 lg:pl-6 col-span-2 sm:col-span-3 lg:col-span-2">
+            <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Timeline Range</div>
+            <div>
+              <div className="text-lg sm:text-xl font-bold text-gray-900 leading-none">
+                {minBlock.toLocaleString()} - {maxBlock.toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                ~{Math.round(blocksInTwoMonths / (24 * 3600 / data.avg_block_time))} days of history
+              </div>
+            </div>
           </div>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div>
-            <div className="text-sm font-medium text-gray-500 mb-1">Current Block</div>
-            <div className="text-2xl font-bold text-gray-900">
-              {data.current_block.height.toLocaleString()}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              {new Date(data.current_block.timestamp).toLocaleString()}
-            </div>
-          </div>
-          <div>
-            <div className="text-sm font-medium text-gray-500 mb-1">Average Block Time</div>
-            <div className="text-2xl font-bold text-gray-900">
-              {data.avg_block_time.toFixed(2)}s
-            </div>
-          </div>
-          <div>
-            <div className="text-sm font-medium text-gray-500 mb-1">Timeline Range</div>
-            <div className="text-sm font-bold text-gray-900">
-              {minBlock.toLocaleString()} - {maxBlock.toLocaleString()}
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              ~{Math.round(blocksInTwoMonths / (24 * 3600 / data.avg_block_time))} days
-            </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
+          <div className="flex-1 flex items-center justify-center sm:justify-start">
+            <span className="text-xs text-gray-500">
+              Auto-refreshing every 60s
+              {dataUpdatedAt && ` (${Math.floor((Date.now() - dataUpdatedAt) / 1000)}s ago)`}
+            </span>
           </div>
         </div>
       </div>
@@ -230,12 +260,9 @@ export function Timeline() {
             const blockToShow = targetHeight || urlBlock
             
             if (blockToShow && blockToShow >= detailedMinBlock && blockToShow <= detailedMaxBlock) {
-              const serverTime = new Date(data.current_block.timestamp).getTime()
-              const elapsedSeconds = (currentTime - serverTime) / 1000
-              const estimatedBlocksPassed = elapsedSeconds / data.avg_block_time
-              const estimatedCurrentBlock = Math.floor(data.current_block.height + estimatedBlocksPassed)
+              const currentEstimatedBlock = getEstimatedCurrentBlock()
               
-              const blocksUntilTarget = blockToShow - estimatedCurrentBlock
+              const blocksUntilTarget = blockToShow - currentEstimatedBlock
               const secondsUntilTarget = Math.max(0, blocksUntilTarget * data.avg_block_time)
               
               if (blocksUntilTarget > 0) {

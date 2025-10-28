@@ -47,7 +47,7 @@ class InferenceService:
         self.last_fetch_time: Optional[float] = None
         self.timeline_cache: Optional[TimelineResponse] = None
         self.timeline_cache_time: Optional[float] = None
-        self.timeline_cache_ttl: float = 180.0
+        self.timeline_cache_ttl: float = 30.0
     
     async def _calculate_avg_block_time(self, current_height: int) -> float:
         try:
@@ -72,8 +72,13 @@ class InferenceService:
             return 6.0
     
     async def get_canonical_height(self, epoch_id: int, requested_height: Optional[int] = None) -> int:
-        latest_info = await self.client.get_latest_epoch()
-        current_epoch_id = latest_info["latest_epoch"]["index"]
+        if self.current_epoch_id is None:
+            latest_info = await self.client.get_latest_epoch()
+            current_epoch_id = latest_info["latest_epoch"]["index"]
+            self.current_epoch_id = current_epoch_id
+        else:
+            current_epoch_id = self.current_epoch_id
+            latest_info = None
         
         if epoch_id == current_epoch_id:
             current_height = await self.client.get_latest_height()
@@ -87,6 +92,8 @@ class InferenceService:
             next_effective_height = next_epoch_data["active_participants"]["effective_block_height"]
             canonical_height = next_effective_height - 10
         except Exception:
+            if latest_info is None:
+                latest_info = await self.client.get_latest_epoch()
             canonical_height = latest_info["epoch_stages"]["next_poc_start"] - 10
         
         if requested_height is None:
@@ -105,6 +112,47 @@ class InferenceService:
         
         return requested_height
     
+    async def _load_cached_epoch_from_db(self, epoch_id: int) -> Optional[InferenceResponse]:
+        try:
+            cached_stats = await self.cache_db.get_stats(epoch_id)
+            if not cached_stats:
+                return None
+            
+            logger.info(f"Loading cached epoch {epoch_id} from database: {len(cached_stats)} participants")
+            
+            participants_stats = []
+            for stats_dict in cached_stats:
+                try:
+                    participant = ParticipantStats(
+                        index=stats_dict["index"],
+                        address=stats_dict["address"],
+                        weight=stats_dict.get("weight", 0),
+                        validator_key=stats_dict.get("validator_key"),
+                        inference_url=stats_dict.get("inference_url"),
+                        status=stats_dict.get("status"),
+                        models=stats_dict.get("models", []),
+                        current_epoch_stats=CurrentEpochStats(**stats_dict["current_epoch_stats"])
+                    )
+                    participants_stats.append(participant)
+                except Exception as e:
+                    logger.warning(f"Failed to parse cached participant {stats_dict.get('index', 'unknown')}: {e}")
+            
+            if not participants_stats:
+                return None
+            
+            cached_height = cached_stats[0].get("_height", 0)
+            
+            return InferenceResponse(
+                epoch_id=epoch_id,
+                height=cached_height,
+                participants=participants_stats,
+                cached_at=cached_stats[0].get("_cached_at", datetime.utcnow().isoformat()),
+                is_current=True
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load cached epoch from database: {e}")
+            return None
+    
     async def get_current_epoch_stats(self, reload: bool = False) -> InferenceResponse:
         current_time = time.time()
         cache_age = (current_time - self.last_fetch_time) if self.last_fetch_time else None
@@ -112,6 +160,21 @@ class InferenceService:
         if not reload and self.current_epoch_data and cache_age and cache_age < 300:
             logger.info(f"Returning cached current epoch data (age: {cache_age:.1f}s)")
             return self.current_epoch_data
+        
+        if not self.current_epoch_data and not reload:
+            try:
+                latest_info = await self.client.get_latest_epoch()
+                current_epoch_id = latest_info["latest_epoch"]["index"]
+                
+                db_cached = await self._load_cached_epoch_from_db(current_epoch_id)
+                if db_cached:
+                    logger.info(f"Loaded current epoch {current_epoch_id} from database on startup")
+                    self.current_epoch_data = db_cached
+                    self.current_epoch_id = current_epoch_id
+                    self.last_fetch_time = current_time - 31
+                    return db_cached
+            except Exception as e:
+                logger.warning(f"Failed to load cached data from database on startup: {e}")
         
         try:
             logger.info("Fetching fresh current epoch data")
@@ -573,8 +636,13 @@ class InferenceService:
         height: Optional[int] = None
     ) -> Optional[ParticipantDetailsResponse]:
         try:
-            latest_info = await self.client.get_latest_epoch()
-            current_epoch_id = latest_info["latest_epoch"]["index"]
+            if self.current_epoch_id is None:
+                latest_info = await self.client.get_latest_epoch()
+                current_epoch_id = latest_info["latest_epoch"]["index"]
+                self.current_epoch_id = current_epoch_id
+            else:
+                current_epoch_id = self.current_epoch_id
+            
             is_current = (epoch_id == current_epoch_id)
             
             if is_current:
@@ -598,49 +666,79 @@ class InferenceService:
             else:
                 epoch_ids = []
             
+            rewards_data = await self.cache_db.get_rewards_for_participant(participant_id, epoch_ids) if epoch_ids else []
+            cached_epoch_ids = {r["epoch_id"] for r in rewards_data}
+            missing_epoch_ids = [eid for eid in epoch_ids if eid not in cached_epoch_ids]
+            
+            warm_keys_data = await self.cache_db.get_warm_keys(epoch_id, participant_id)
+            hardware_nodes_data = await self.cache_db.get_hardware_nodes(epoch_id, participant_id)
+            
+            fetch_tasks = []
+            
+            if missing_epoch_ids:
+                logger.info(f"Fetching missing rewards inline for epochs {missing_epoch_ids}")
+                for missing_epoch in missing_epoch_ids:
+                    fetch_tasks.append(('reward', missing_epoch, 
+                        self.client.get_epoch_performance_summary(missing_epoch, participant_id)))
+            
+            if warm_keys_data is None:
+                logger.info(f"Fetching warm keys inline for participant {participant_id}")
+                fetch_tasks.append(('warm_keys', None, self.client.get_authz_grants(participant_id)))
+            
+            if hardware_nodes_data is None:
+                logger.info(f"Fetching hardware nodes inline for participant {participant_id}")
+                fetch_tasks.append(('hardware', None, self.client.get_hardware_nodes(participant_id)))
+            
+            if fetch_tasks:
+                results = await asyncio.gather(*[task[2] for task in fetch_tasks], return_exceptions=True)
+                
+                newly_fetched_rewards = []
+                for i, (task_type, task_epoch_id, _) in enumerate(fetch_tasks):
+                    result = results[i]
+                    
+                    if isinstance(result, Exception):
+                        logger.debug(f"Fetch failed for {task_type}: {result}")
+                        continue
+                    
+                    if task_type == 'reward':
+                        perf = result.get("epochPerformanceSummary", {})
+                        newly_fetched_rewards.append({
+                            "epoch_id": task_epoch_id,
+                            "participant_id": participant_id,
+                            "rewarded_coins": perf.get("rewarded_coins", "0"),
+                            "claimed": perf.get("claimed", False)
+                        })
+                    elif task_type == 'warm_keys':
+                        warm_keys_data = result if result else []
+                        if result:
+                            await self.cache_db.save_warm_keys_batch(epoch_id, participant_id, result)
+                    elif task_type == 'hardware':
+                        hardware_nodes_data = result if result else []
+                        if result:
+                            await self.cache_db.save_hardware_nodes_batch(epoch_id, participant_id, result)
+                
+                if newly_fetched_rewards:
+                    await self.cache_db.save_reward_batch(newly_fetched_rewards)
+                    logger.info(f"Cached {len(newly_fetched_rewards)} inline-fetched rewards")
+                    rewards_data.extend(newly_fetched_rewards)
+            
+            if warm_keys_data is None:
+                warm_keys_data = []
+            if hardware_nodes_data is None:
+                hardware_nodes_data = []
+            
             rewards = []
-            if epoch_ids:
-                rewards_data = await self.cache_db.get_rewards_for_participant(participant_id, epoch_ids)
-                cached_epoch_ids = {r["epoch_id"] for r in rewards_data}
+            for reward_data in rewards_data:
+                rewarded_coins = reward_data.get("rewarded_coins", "0")
+                gnk = int(rewarded_coins) // 1_000_000_000 if rewarded_coins != "0" else 0
                 
-                missing_epoch_ids = [eid for eid in epoch_ids if eid not in cached_epoch_ids]
-                
-                if missing_epoch_ids:
-                    logger.info(f"Fetching missing rewards inline for epochs {missing_epoch_ids}")
-                    newly_fetched = []
-                    for missing_epoch in missing_epoch_ids:
-                        try:
-                            summary = await self.client.get_epoch_performance_summary(
-                                missing_epoch,
-                                participant_id
-                            )
-                            perf = summary.get("epochPerformanceSummary", {})
-                            reward_data = {
-                                "epoch_id": missing_epoch,
-                                "participant_id": participant_id,
-                                "rewarded_coins": perf.get("rewarded_coins", "0"),
-                                "claimed": perf.get("claimed", False)
-                            }
-                            rewards_data.append(reward_data)
-                            newly_fetched.append(reward_data)
-                        except Exception as e:
-                            logger.debug(f"Could not fetch reward for epoch {missing_epoch}: {e}")
-                    
-                    if newly_fetched:
-                        await self.cache_db.save_reward_batch(newly_fetched)
-                        logger.info(f"Cached {len(newly_fetched)} inline-fetched rewards")
-                
-                for reward_data in rewards_data:
-                    rewarded_coins = reward_data.get("rewarded_coins", "0")
-                    gnk = int(rewarded_coins) // 1_000_000_000 if rewarded_coins != "0" else 0
-                    
-                    rewards.append(RewardInfo(
-                        epoch_id=reward_data["epoch_id"],
-                        assigned_reward_gnk=gnk,
-                        claimed=reward_data["claimed"]
-                    ))
-                
-                rewards.sort(key=lambda r: r.epoch_id, reverse=True)
+                rewards.append(RewardInfo(
+                    epoch_id=reward_data["epoch_id"],
+                    assigned_reward_gnk=gnk,
+                    claimed=reward_data["claimed"]
+                ))
+            
+            rewards.sort(key=lambda r: r.epoch_id, reverse=True)
             
             seed = None
             cached_stats = await self.cache_db.get_stats(epoch_id, height)
@@ -656,43 +754,13 @@ class InferenceService:
                             )
                         break
             
-            warm_keys_data = await self.cache_db.get_warm_keys(epoch_id, participant_id)
-            
-            if warm_keys_data is None:
-                logger.info(f"Fetching warm keys inline for participant {participant_id}")
-                try:
-                    warm_keys_raw = await self.client.get_authz_grants(participant_id)
-                    if warm_keys_raw:
-                        await self.cache_db.save_warm_keys_batch(epoch_id, participant_id, warm_keys_raw)
-                        warm_keys_data = warm_keys_raw
-                    else:
-                        warm_keys_data = []
-                except Exception as e:
-                    logger.warning(f"Failed to fetch warm keys for {participant_id}: {e}")
-                    warm_keys_data = []
-            
             warm_keys = [
                 WarmKeyInfo(
                     grantee_address=wk["grantee_address"],
                     granted_at=wk["granted_at"]
                 )
-                for wk in (warm_keys_data or [])
+                for wk in warm_keys_data
             ]
-            
-            hardware_nodes_data = await self.cache_db.get_hardware_nodes(epoch_id, participant_id)
-            
-            if hardware_nodes_data is None:
-                logger.info(f"Fetching hardware nodes inline for participant {participant_id}")
-                try:
-                    hardware_nodes_raw = await self.client.get_hardware_nodes(participant_id)
-                    if hardware_nodes_raw:
-                        await self.cache_db.save_hardware_nodes_batch(epoch_id, participant_id, hardware_nodes_raw)
-                        hardware_nodes_data = hardware_nodes_raw
-                    else:
-                        hardware_nodes_data = []
-                except Exception as e:
-                    logger.warning(f"Failed to fetch hardware nodes for {participant_id}: {e}")
-                    hardware_nodes_data = []
             
             ml_nodes_map = {}
             cached_stats = await self.cache_db.get_stats(epoch_id, height)
@@ -971,6 +1039,29 @@ class InferenceService:
             logger.info(f"Returning cached timeline data (age: {current_time - self.timeline_cache_time:.1f}s)")
             return self.timeline_cache
         
+        if self.timeline_cache is None:
+            cached_data = await self.cache_db.get_timeline_cache()
+            if cached_data:
+                logger.info("Loading timeline from database cache on startup")
+                timeline_dict = cached_data["timeline"]
+                try:
+                    response = TimelineResponse(
+                        current_block=BlockInfo(**timeline_dict["current_block"]),
+                        reference_block=BlockInfo(**timeline_dict["reference_block"]),
+                        avg_block_time=timeline_dict["avg_block_time"],
+                        events=[TimelineEvent(**e) for e in timeline_dict["events"]],
+                        current_epoch_start=timeline_dict["current_epoch_start"],
+                        current_epoch_index=timeline_dict["current_epoch_index"],
+                        epoch_length=timeline_dict["epoch_length"],
+                        epoch_stages=timeline_dict.get("epoch_stages"),
+                        next_epoch_stages=timeline_dict.get("next_epoch_stages")
+                    )
+                    self.timeline_cache = response
+                    self.timeline_cache_time = current_time - 29
+                    return response
+                except Exception as e:
+                    logger.warning(f"Failed to parse cached timeline data: {e}")
+        
         logger.info("Fetching fresh timeline data")
         current_height = await self.client.get_latest_height()
         current_block_data = await self.client.get_block(current_height)
@@ -1019,13 +1110,87 @@ class InferenceService:
         
         self.timeline_cache = response
         self.timeline_cache_time = current_time
+        
+        try:
+            await self.cache_db.save_timeline_cache(response.dict())
+        except Exception as e:
+            logger.warning(f"Failed to save timeline to database: {e}")
+        
         logger.info(f"Cached fresh timeline data")
         
         return response
     
     async def get_current_models(self) -> ModelsResponse:
+        if self.current_epoch_id is None:
+            try:
+                latest_info = await self.client.get_latest_epoch()
+                epoch_id = latest_info["latest_epoch"]["index"]
+                self.current_epoch_id = epoch_id
+            except Exception as e:
+                logger.error(f"Failed to get current epoch ID: {e}")
+                raise
+        else:
+            epoch_id = self.current_epoch_id
+        
+        cached_models = await self.cache_db.get_models(epoch_id)
+        cached_api_data = await self.cache_db.get_models_api_cache(epoch_id)
+        
+        if cached_models and cached_api_data:
+            logger.info(f"Returning fully cached models for epoch {epoch_id} from database")
+            
+            models_all_data = cached_api_data["models_all"]
+            models_stats_data = cached_api_data["models_stats"]
+            cached_height = cached_api_data.get("cached_height", 0)
+            
+            stats_list = models_stats_data.get("stats_models", [])
+            models_list = models_all_data.get("model", [])
+            cached_dict = {m["model_id"]: m for m in cached_models}
+            
+            models_info = []
+            for model in models_list:
+                model_id = model["id"]
+                cached = cached_dict.get(model_id, {})
+                
+                models_info.append(ModelInfo(
+                    id=model_id,
+                    total_weight=cached.get("total_weight", 0),
+                    participant_count=cached.get("participant_count", 0),
+                    proposed_by=model.get("proposed_by", ""),
+                    v_ram=model.get("v_ram", ""),
+                    throughput_per_nonce=model.get("throughput_per_nonce", ""),
+                    units_of_compute_per_token=model.get("units_of_compute_per_token", ""),
+                    hf_repo=model.get("hf_repo", ""),
+                    hf_commit=model.get("hf_commit", ""),
+                    model_args=model.get("model_args", []),
+                    validation_threshold=model.get("validation_threshold", {})
+                ))
+            
+            stats_info = []
+            for stat in stats_list:
+                stats_info.append(ModelStats(
+                    model=stat.get("model", ""),
+                    ai_tokens=stat.get("ai_tokens", "0"),
+                    inferences=stat.get("inferences", 0)
+                ))
+            
+            current_block_timestamp = None
+            avg_block_time = None
+            if self.current_epoch_data:
+                current_block_timestamp = self.current_epoch_data.current_block_timestamp
+                avg_block_time = self.current_epoch_data.avg_block_time
+            
+            return ModelsResponse(
+                epoch_id=epoch_id,
+                height=cached_height,
+                models=models_info,
+                stats=stats_info,
+                cached_at=cached_api_data.get("cached_at", datetime.utcnow().isoformat()),
+                is_current=True,
+                current_block_timestamp=current_block_timestamp,
+                avg_block_time=avg_block_time
+            )
+        
         epoch_data = await self.client.get_current_epoch_participants()
-        epoch_id = epoch_data["active_participants"]["epoch_group_id"]
         participants = epoch_data["active_participants"]["participants"]
         height = await self.client.get_latest_height()
         
@@ -1117,13 +1282,21 @@ class InferenceService:
                 inferences=stat.get("inferences", 0)
             ))
         
+        current_block_timestamp = None
+        avg_block_time = None
+        if self.current_epoch_data:
+            current_block_timestamp = self.current_epoch_data.current_block_timestamp
+            avg_block_time = self.current_epoch_data.avg_block_time
+        
         return ModelsResponse(
             epoch_id=epoch_id,
             height=height,
             models=models_info,
             stats=stats_info,
             cached_at=datetime.utcnow().isoformat(),
-            is_current=True
+            is_current=True,
+            current_block_timestamp=current_block_timestamp,
+            avg_block_time=avg_block_time
         )
     
     async def get_historical_models(self, epoch_id: int, height: Optional[int] = None) -> ModelsResponse:
@@ -1218,13 +1391,21 @@ class InferenceService:
                 inferences=stat.get("inferences", 0)
             ))
         
+        current_block_timestamp = None
+        avg_block_time = None
+        if self.current_epoch_data:
+            current_block_timestamp = self.current_epoch_data.current_block_timestamp
+            avg_block_time = self.current_epoch_data.avg_block_time
+        
         return ModelsResponse(
             epoch_id=epoch_id,
             height=target_height,
             models=models_info,
             stats=stats_info,
             cached_at=datetime.utcnow().isoformat(),
-            is_current=False
+            is_current=False,
+            current_block_timestamp=current_block_timestamp,
+            avg_block_time=avg_block_time
         )
     
     async def poll_participant_inferences(self):
@@ -1363,13 +1544,17 @@ class InferenceService:
         participant_id: str
     ) -> Dict[str, Any]:
         try:
+            logger.info(f"Fetching inferences summary for participant {participant_id} in epoch {epoch_id}")
+            
             cached_inferences = await self.cache_db.get_participant_inferences(
                 epoch_id=epoch_id,
                 participant_id=participant_id
             )
             
+            logger.info(f"Cache result for {participant_id} epoch {epoch_id}: {type(cached_inferences)} with {len(cached_inferences) if cached_inferences is not None else 'None'} items")
+            
             if cached_inferences is None:
-                logger.debug(f"No cached inferences for {participant_id} in epoch {epoch_id}, returning empty (cache-only mode)")
+                logger.warning(f"No cached inferences for {participant_id} in epoch {epoch_id}, returning empty (cache-only mode)")
                 return {
                     "epoch_id": epoch_id,
                     "participant_id": participant_id,
@@ -1411,7 +1596,7 @@ class InferenceService:
                 "successful": successful[:10],
                 "expired": expired[:10],
                 "invalidated": invalidated[:10],
-                "cached_at": datetime.utcnow().isoformat() if cached_inferences else None
+                "cached_at": datetime.utcnow().isoformat() if cached_inferences is not None else None
             }
             
         except Exception as e:

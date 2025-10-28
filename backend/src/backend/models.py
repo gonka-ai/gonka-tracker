@@ -187,6 +187,8 @@ class ModelsResponse(BaseModel):
     stats: List[ModelStats]
     cached_at: str
     is_current: bool
+    current_block_timestamp: Optional[str] = None
+    avg_block_time: Optional[float] = None
 
 
 class InferenceDetail(BaseModel):

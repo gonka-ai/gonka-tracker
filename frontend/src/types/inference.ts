@@ -147,6 +147,8 @@ export interface ModelsResponse {
   stats: ModelStats[];
   cached_at: string;
   is_current: boolean;
+  current_block_timestamp?: string;
+  avg_block_time?: number;
 }
 
 export interface InferenceDetail {

@@ -23,8 +23,8 @@ export function Models() {
   const { data, isLoading: loading, error: queryError, refetch } = useQuery<ModelsResponse>({
     queryKey: ['models', selectedEpochId === null ? 'current' : selectedEpochId],
     queryFn: () => fetchModels(selectedEpochId),
-    staleTime: 30000,
-    refetchInterval: 30000,
+    staleTime: 90000,
+    refetchInterval: 90000,
     refetchOnMount: true,
     placeholderData: (previousData) => previousData,
   })
@@ -159,15 +159,21 @@ export function Models() {
 
           <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
             <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Block Height</div>
-            <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
-              {data.height.toLocaleString()}
+            <div>
+              <div className="text-2xl font-bold text-gray-900 leading-none">
+                {data.height.toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]"></div>
             </div>
           </div>
 
           <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
             <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Models</div>
-            <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
-              {data.models.length}
+            <div>
+              <div className="text-2xl font-bold text-gray-900 leading-none">
+                {data.models.length}
+              </div>
+              <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]"></div>
             </div>
           </div>
         </div>
@@ -175,7 +181,7 @@ export function Models() {
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
           <div className="flex-1 flex items-center justify-center sm:justify-start">
             {selectedEpochId === null && (
-              <span className="text-xs text-gray-500">Auto-refreshing every 30s</span>
+              <span className="text-xs text-gray-500">Auto-refreshing every 90s</span>
             )}
           </div>
           <div className="flex items-center gap-3">

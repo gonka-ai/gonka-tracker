@@ -195,6 +195,14 @@ class CacheDB:
                 ON participant_inferences(epoch_id, participant_id, status)
             """)
             
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS timeline_cache (
+                    id INTEGER PRIMARY KEY,
+                    timeline_json TEXT NOT NULL,
+                    cached_at TEXT NOT NULL
+                )
+            """)
+            
             await db.commit()
             logger.info(f"Database initialized at {self.db_path}")
     
@@ -823,6 +831,8 @@ class CacheDB:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             
+            logger.debug(f"Querying inferences for participant {participant_id} in epoch {epoch_id}")
+            
             async with db.execute("""
                 SELECT inference_id, status, start_block_height, start_block_timestamp,
                        validated_by_json, prompt_hash, response_hash, prompt_payload,
@@ -833,7 +843,10 @@ class CacheDB:
             """, (epoch_id, participant_id)) as cursor:
                 rows = await cursor.fetchall()
                 
+                logger.debug(f"Found {len(rows)} rows for participant {participant_id} in epoch {epoch_id}")
+                
                 if not rows:
+                    logger.debug(f"No rows found, returning None")
                     return None
                 
                 has_marker = any(row["status"] == "_EMPTY_MARKER_" for row in rows)
@@ -930,5 +943,37 @@ class CacheDB:
                     "models_stats": json.loads(row["models_stats_json"]),
                     "cached_at": row["cached_at"],
                     "cached_height": row["height"]
+                }
+    
+    async def save_timeline_cache(self, timeline_data: Dict[str, Any]):
+        cached_at = datetime.utcnow().isoformat()
+        timeline_json = json.dumps(timeline_data)
+        
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM timeline_cache")
+            await db.execute("""
+                INSERT INTO timeline_cache (id, timeline_json, cached_at)
+                VALUES (1, ?, ?)
+            """, (timeline_json, cached_at))
+            await db.commit()
+            logger.info("Cached timeline data")
+    
+    async def get_timeline_cache(self) -> Optional[Dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            
+            async with db.execute("""
+                SELECT timeline_json, cached_at
+                FROM timeline_cache
+                WHERE id = 1
+            """) as cursor:
+                row = await cursor.fetchone()
+                
+                if not row:
+                    return None
+                
+                return {
+                    "timeline": json.loads(row["timeline_json"]),
+                    "cached_at": row["cached_at"]
                 }
 

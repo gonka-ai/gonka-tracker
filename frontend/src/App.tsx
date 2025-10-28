@@ -7,6 +7,7 @@ import { Timeline } from './components/Timeline'
 import { Models } from './components/Models'
 import { EpochTimer } from './components/EpochTimer'
 import { usePrefetch } from './hooks/usePrefetch'
+import { useEstimatedBlock } from './hooks/useEstimatedBlock'
 
 type Page = 'dashboard' | 'models' | 'timeline'
 
@@ -38,6 +39,14 @@ function App() {
   })
 
   const error = queryError ? (queryError as Error).message : ''
+
+  const estimatedBlock = useEstimatedBlock(
+    data?.current_block_height || 0,
+    data?.current_block_timestamp || new Date().toISOString(),
+    data?.avg_block_time || 6
+  )
+
+  const shouldShowEstimatedBlock = data?.current_block_height && data?.current_block_timestamp && data?.avg_block_time
 
   useEffect(() => {
     if (data?.is_current) {
@@ -171,8 +180,8 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 md:py-8 max-w-[1600px]">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="flex-1 container mx-auto px-3 sm:px-4 py-4 sm:py-6 md:py-8 max-w-[1600px]">
         <header className="mb-6 md:mb-8">
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 sm:gap-4 mb-4 md:mb-6">
             <img src="/gonka.svg" alt="Gonka" className="h-10 sm:h-12 w-auto" />
@@ -244,16 +253,26 @@ function App() {
                   </div>
 
                   <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
-                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Block Height</div>
-                    <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
-                      {data.height.toLocaleString()}
+                    <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Current Block</div>
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900 leading-none">
+                        {shouldShowEstimatedBlock ? estimatedBlock.toLocaleString() : data.height.toLocaleString()}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]">
+                        {shouldShowEstimatedBlock && (
+                          <>Last confirmed: {data.height.toLocaleString()}</>
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="border-t sm:border-t-0 sm:border-l border-gray-200 pt-4 sm:pt-0 sm:pl-4 lg:pl-6">
                     <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Total Participants</div>
-                    <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
-                      {data.participants.length}
+                    <div>
+                      <div className="text-2xl font-bold text-gray-900 leading-none">
+                        {data.participants.length}
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]"></div>
                     </div>
                   </div>
 
@@ -278,11 +297,11 @@ function App() {
                           : '-'
                         }
                       </div>
-                      {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null || data.total_assigned_rewards_gnk === 0) && (
-                        <div className="text-xs text-gray-500 mt-1">
-                          {loading ? 'Loading...' : data.is_current ? 'Pending settlement' : 'Calculating...'}
-                        </div>
-                      )}
+                      <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]">
+                        {(data.total_assigned_rewards_gnk === undefined || data.total_assigned_rewards_gnk === null || data.total_assigned_rewards_gnk === 0) && (
+                          <>{loading ? 'Loading...' : data.is_current ? 'Pending settlement' : 'Calculating...'}</>
+                        )}
+                      </div>
                     </div>
                   </div>
 

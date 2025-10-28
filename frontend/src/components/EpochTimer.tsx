@@ -23,9 +23,10 @@ export function EpochTimer({ data }: EpochTimerProps) {
       <div className="border-t lg:border-t-0 lg:border-l border-gray-200 pt-4 lg:pt-0 lg:pl-6 col-span-2 sm:col-span-3 lg:col-span-1">
         <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Time To Next Epoch</div>
         <div>
-          <div className="text-2xl font-bold text-gray-900 leading-none min-h-[2rem] flex items-center">
+          <div className="text-2xl font-bold text-gray-900 leading-none">
             -
           </div>
+          <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]"></div>
         </div>
       </div>
     )
@@ -45,10 +46,11 @@ export function EpochTimer({ data }: EpochTimerProps) {
       <div className="border-t lg:border-t-0 lg:border-l border-gray-200 pt-4 lg:pt-0 lg:pl-6 col-span-2 sm:col-span-3 lg:col-span-1">
         <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Time To Next Epoch</div>
         <div>
-          <div className="flex items-center gap-2 min-h-[2rem]">
+          <div className="flex items-center gap-2">
             <span className="text-2xl font-bold text-gray-900 leading-none">PoC in Progress</span>
             <span className="h-2 w-2 bg-gray-900 rounded-full animate-pulse"></span>
           </div>
+          <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]"></div>
         </div>
       </div>
     )
@@ -84,7 +86,7 @@ export function EpochTimer({ data }: EpochTimerProps) {
         <div className="text-2xl font-bold text-gray-900 leading-none">
           {formatTime(secondsRemaining)}
         </div>
-        <div className="text-xs text-gray-500 mt-1">
+        <div className="text-xs text-gray-500 mt-1 min-h-[1.25rem]">
           ~{blocksRemaining > 0 ? blocksRemaining.toLocaleString() : 0} blocks remaining
         </div>
       </div>

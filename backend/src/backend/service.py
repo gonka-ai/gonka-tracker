@@ -133,7 +133,9 @@ class InferenceService:
                         inference_url=stats_dict.get("inference_url"),
                         status=stats_dict.get("status"),
                         models=stats_dict.get("models", []),
-                        current_epoch_stats=CurrentEpochStats(**stats_dict["current_epoch_stats"])
+                        current_epoch_stats=CurrentEpochStats(**stats_dict["current_epoch_stats"]),
+                        seed_signature=stats_dict.get("_seed_signature"),
+                        ml_nodes_map=stats_dict.get("_ml_nodes_map", {})
                     )
                     participants_stats.append(participant)
                 except Exception as e:
@@ -223,7 +225,9 @@ class InferenceService:
                         inference_url=p.get("inference_url"),
                         status=p.get("status"),
                         models=epoch_data_for_participant.get("models", []),
-                        current_epoch_stats=CurrentEpochStats(**p["current_epoch_stats"])
+                        current_epoch_stats=CurrentEpochStats(**p["current_epoch_stats"]),
+                        seed_signature=epoch_data_for_participant.get("seed_signature"),
+                        ml_nodes_map=epoch_data_for_participant.get("ml_nodes_map", {})
                     )
                     participants_stats.append(participant)
                     
@@ -399,7 +403,9 @@ class InferenceService:
                         inference_url=p.get("inference_url"),
                         status=p.get("status"),
                         models=epoch_data_for_participant.get("models", []),
-                        current_epoch_stats=CurrentEpochStats(**p["current_epoch_stats"])
+                        current_epoch_stats=CurrentEpochStats(**p["current_epoch_stats"]),
+                        seed_signature=epoch_data_for_participant.get("seed_signature"),
+                        ml_nodes_map=epoch_data_for_participant.get("ml_nodes_map", {})
                     )
                     participants_stats.append(participant)
                     
@@ -719,12 +725,10 @@ class InferenceService:
                         })
                     elif task_type == 'warm_keys':
                         warm_keys_data = result if result else []
-                        if result:
-                            await self.cache_db.save_warm_keys_batch(epoch_id, participant_id, result)
+                        await self.cache_db.save_warm_keys_batch(epoch_id, participant_id, warm_keys_data)
                     elif task_type == 'hardware':
                         hardware_nodes_data = result if result else []
-                        if result:
-                            await self.cache_db.save_hardware_nodes_batch(epoch_id, participant_id, result)
+                        await self.cache_db.save_hardware_nodes_batch(epoch_id, participant_id, hardware_nodes_data)
                 
                 if newly_fetched_rewards:
                     await self.cache_db.save_reward_batch(newly_fetched_rewards)
@@ -750,18 +754,25 @@ class InferenceService:
             rewards.sort(key=lambda r: r.epoch_id, reverse=True)
             
             seed = None
-            cached_stats = await self.cache_db.get_stats(epoch_id, height)
-            if cached_stats:
-                for s in cached_stats:
-                    if s.get("index") == participant_id:
-                        seed_sig = s.get("_seed_signature")
-                        if seed_sig:
-                            seed = SeedInfo(
-                                participant=participant_id,
-                                epoch_index=epoch_id,
-                                signature=seed_sig
-                            )
-                        break
+            if participant.seed_signature:
+                seed = SeedInfo(
+                    participant=participant_id,
+                    epoch_index=epoch_id,
+                    signature=participant.seed_signature
+                )
+            else:
+                cached_stats = await self.cache_db.get_stats(epoch_id, height)
+                if cached_stats:
+                    for s in cached_stats:
+                        if s.get("index") == participant_id:
+                            seed_sig = s.get("_seed_signature")
+                            if seed_sig:
+                                seed = SeedInfo(
+                                    participant=participant_id,
+                                    epoch_index=epoch_id,
+                                    signature=seed_sig
+                                )
+                            break
             
             warm_keys = [
                 WarmKeyInfo(
@@ -771,13 +782,14 @@ class InferenceService:
                 for wk in warm_keys_data
             ]
             
-            ml_nodes_map = {}
-            cached_stats = await self.cache_db.get_stats(epoch_id, height)
-            if cached_stats:
-                for s in cached_stats:
-                    if s.get("index") == participant_id:
-                        ml_nodes_map = s.get("_ml_nodes_map", {})
-                        break
+            ml_nodes_map = participant.ml_nodes_map if participant.ml_nodes_map else {}
+            if not ml_nodes_map:
+                cached_stats = await self.cache_db.get_stats(epoch_id, height)
+                if cached_stats:
+                    for s in cached_stats:
+                        if s.get("index") == participant_id:
+                            ml_nodes_map = s.get("_ml_nodes_map", {})
+                            break
             
             ml_nodes = []
             for node in (hardware_nodes_data or []):

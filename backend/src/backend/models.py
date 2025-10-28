@@ -36,6 +36,8 @@ class ParticipantStats(BaseModel):
     website: Optional[str] = None
     validator_consensus_key: Optional[str] = None
     consensus_key_mismatch: Optional[bool] = None
+    seed_signature: Optional[str] = None
+    ml_nodes_map: Optional[Dict[str, int]] = None
     
     @computed_field
     @property

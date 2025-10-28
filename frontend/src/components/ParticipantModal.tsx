@@ -48,7 +48,7 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
   
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !selectedInference) {
         onClose()
       }
     }
@@ -57,7 +57,7 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
     return () => {
       document.removeEventListener('keydown', handleEscape)
     }
-  }, [onClose])
+  }, [onClose, selectedInference])
   
   useEffect(() => {
     if (participant) {

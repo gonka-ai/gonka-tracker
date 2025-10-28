@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { ModelInfo, ModelStats } from '../types/inference'
 
 interface ModelModalProps {
@@ -7,6 +8,19 @@ interface ModelModalProps {
 }
 
 export function ModelModal({ model, stats, onClose }: ModelModalProps) {
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose()
+      }
+    }
+
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [onClose])
+
   if (!model) return null
 
   const handleBackdropClick = (e: React.MouseEvent) => {

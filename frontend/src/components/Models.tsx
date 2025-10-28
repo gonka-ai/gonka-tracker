@@ -20,7 +20,7 @@ export function Models() {
     return response.json()
   }
 
-  const { data, isLoading: loading, error: queryError, refetch } = useQuery<ModelsResponse>({
+  const { data, isLoading: loading, error: queryError, refetch, dataUpdatedAt } = useQuery<ModelsResponse>({
     queryKey: ['models', selectedEpochId === null ? 'current' : selectedEpochId],
     queryFn: () => fetchModels(selectedEpochId),
     staleTime: 90000,
@@ -181,7 +181,10 @@ export function Models() {
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
           <div className="flex-1 flex items-center justify-center sm:justify-start">
             {selectedEpochId === null && (
-              <span className="text-xs text-gray-500">Auto-refreshing every 90s</span>
+              <span className="text-xs text-gray-500">
+                Auto-refreshing every 90s
+                {dataUpdatedAt && ` (${Math.floor((Date.now() - dataUpdatedAt) / 1000)}s ago)`}
+              </span>
             )}
           </div>
           <div className="flex items-center gap-3">

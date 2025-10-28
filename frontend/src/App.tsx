@@ -29,7 +29,7 @@ function App() {
     return response.json()
   }
 
-  const { data, isLoading: loading, error: queryError, refetch } = useQuery<InferenceResponse>({
+  const { data, isLoading: loading, error: queryError, refetch, dataUpdatedAt } = useQuery<InferenceResponse>({
     queryKey: ['inference', selectedEpochId === null ? 'current' : selectedEpochId],
     queryFn: () => fetchInference(selectedEpochId),
     staleTime: 0,
@@ -311,7 +311,10 @@ function App() {
                 <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
                   <div className="flex-1 flex items-center justify-center sm:justify-start">
                     {selectedEpochId === null && (
-                      <span className="text-xs text-gray-500">Auto-refreshing every 30s</span>
+                      <span className="text-xs text-gray-500">
+                        Auto-refreshing every 30s
+                        {dataUpdatedAt && ` (${Math.floor((Date.now() - dataUpdatedAt) / 1000)}s ago)`}
+                      </span>
                     )}
                   </div>
                   <div className="flex items-center gap-3">

@@ -13,7 +13,7 @@ export function Timeline() {
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
 
-  const { data, isLoading: loading, error: queryError, dataUpdatedAt } = useQuery<TimelineResponse>({
+  const { data, isLoading: loading, error: queryError, dataUpdatedAt, refetch } = useQuery<TimelineResponse>({
     queryKey: ['timeline'],
     queryFn: async () => {
       const response = await fetch(`${apiUrl}/v1/timeline`)
@@ -248,6 +248,13 @@ export function Timeline() {
               {dataUpdatedAt && ` (${Math.floor((Date.now() - dataUpdatedAt) / 1000)}s ago)`}
             </span>
           </div>
+          <button
+            onClick={() => refetch()}
+            disabled={loading}
+            className="flex-1 sm:flex-none px-5 py-2.5 bg-gray-900 text-white font-medium rounded-md hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? 'Refreshing...' : 'Refresh'}
+          </button>
         </div>
       </div>
 

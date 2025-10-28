@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { TimelineResponse } from '../types/inference'
 import { useEstimatedBlock } from '../hooks/useEstimatedBlock'
+import { EpochTimer } from './EpochTimer'
 
 export function Timeline() {
   const [hoveredBlock, setHoveredBlock] = useState<number | null>(null)
@@ -193,7 +194,7 @@ export function Timeline() {
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-lg shadow-sm p-4 md:p-6 border border-gray-200">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 mb-4">
           <div className="col-span-2 sm:col-span-1">
             <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Epoch ID</div>
             <div className="flex items-center gap-2 min-h-[2rem]">
@@ -228,17 +229,19 @@ export function Timeline() {
             </div>
           </div>
 
-          <div className="border-t lg:border-t-0 lg:border-l border-gray-200 pt-4 lg:pt-0 lg:pl-6 col-span-2 sm:col-span-3 lg:col-span-2">
-            <div className="text-sm font-medium text-gray-500 mb-1 leading-tight">Timeline Range</div>
-            <div>
-              <div className="text-lg sm:text-xl font-bold text-gray-900 leading-none">
-                {minBlock.toLocaleString()} - {maxBlock.toLocaleString()}
-              </div>
-              <div className="text-xs text-gray-500 mt-1">
-                ~{Math.round(blocksInTwoMonths / (24 * 3600 / data.avg_block_time))} days of history
-              </div>
-            </div>
-          </div>
+          <EpochTimer 
+            data={{
+              epoch_id: data.current_epoch_index,
+              height: data.current_block.height,
+              participants: [],
+              is_current: true,
+              current_block_height: data.current_block.height,
+              current_block_timestamp: data.current_block.timestamp,
+              avg_block_time: data.avg_block_time,
+              next_poc_start_block: data.epoch_stages?.next_poc_start,
+              set_new_validators_block: data.epoch_stages?.set_new_validators,
+            }}
+          />
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-4 border-t border-gray-200">
@@ -668,7 +671,15 @@ export function Timeline() {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">2-Month Timeline</h2>
+        <div className="mb-4">
+          <h2 className="text-xl font-bold text-gray-900 mb-1">2-Month Timeline</h2>
+          <div className="text-sm text-gray-600">
+            Range: {minBlock.toLocaleString()} - {maxBlock.toLocaleString()} 
+            <span className="text-gray-500 ml-2">
+              (~{Math.round(blocksInTwoMonths / (24 * 3600 / data.avg_block_time))} days range)
+            </span>
+          </div>
+        </div>
         <div className="relative mt-8">
           <svg
             width="100%"

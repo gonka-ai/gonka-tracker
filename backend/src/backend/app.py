@@ -20,7 +20,9 @@ POLL_JAIL_STATUS_INTERVAL = int(os.getenv("POLL_JAIL_STATUS_INTERVAL", "120"))
 POLL_NODE_HEALTH_INTERVAL = int(os.getenv("POLL_NODE_HEALTH_INTERVAL", "60"))
 POLL_REWARDS_INTERVAL = int(os.getenv("POLL_REWARDS_INTERVAL", "60"))
 POLL_WARM_KEYS_INTERVAL = int(os.getenv("POLL_WARM_KEYS_INTERVAL", "300"))
+POLL_WARM_KEYS_BATCH_SIZE = int(os.getenv("POLL_WARM_KEYS_BATCH_SIZE", "10"))
 POLL_HARDWARE_NODES_INTERVAL = int(os.getenv("POLL_HARDWARE_NODES_INTERVAL", "600"))
+POLL_HARDWARE_NODES_BATCH_SIZE = int(os.getenv("POLL_HARDWARE_NODES_BATCH_SIZE", "10"))
 POLL_EPOCH_TOTAL_REWARDS_INTERVAL = int(os.getenv("POLL_EPOCH_TOTAL_REWARDS_INTERVAL", "600"))
 POLL_PARTICIPANT_INFERENCES_INTERVAL = int(os.getenv("POLL_PARTICIPANT_INFERENCES_INTERVAL", "600"))
 POLL_MODELS_API_INTERVAL = int(os.getenv("POLL_MODELS_API_INTERVAL", "300"))
@@ -108,7 +110,7 @@ async def poll_warm_keys():
     while True:
         try:
             if inference_service_instance:
-                await inference_service_instance.poll_warm_keys()
+                await inference_service_instance.poll_warm_keys(batch_size=POLL_WARM_KEYS_BATCH_SIZE)
         except Exception as e:
             logger.error(f"Warm keys polling error: {e}")
         
@@ -121,7 +123,7 @@ async def poll_hardware_nodes():
     while True:
         try:
             if inference_service_instance:
-                await inference_service_instance.poll_hardware_nodes()
+                await inference_service_instance.poll_hardware_nodes(batch_size=POLL_HARDWARE_NODES_BATCH_SIZE)
         except Exception as e:
             logger.error(f"Hardware nodes polling error: {e}")
         
@@ -192,6 +194,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Database path: {db_path}")
     logger.info(f"Polling intervals (s): epoch={POLL_CURRENT_EPOCH_INTERVAL}, jail={POLL_JAIL_STATUS_INTERVAL}, health={POLL_NODE_HEALTH_INTERVAL}, rewards={POLL_REWARDS_INTERVAL}")
     logger.info(f"Polling intervals (s): warm_keys={POLL_WARM_KEYS_INTERVAL}, hardware_nodes={POLL_HARDWARE_NODES_INTERVAL}, total_rewards={POLL_EPOCH_TOTAL_REWARDS_INTERVAL}, inferences={POLL_PARTICIPANT_INFERENCES_INTERVAL}, models_api={POLL_MODELS_API_INTERVAL}, timeline={POLL_TIMELINE_INTERVAL}")
+    logger.info(f"Polling batch sizes: warm_keys={POLL_WARM_KEYS_BATCH_SIZE}, hardware_nodes={POLL_HARDWARE_NODES_BATCH_SIZE}")
     
     cache_db = CacheDB(db_path)
     await cache_db.initialize()

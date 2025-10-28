@@ -48,6 +48,8 @@ class InferenceService:
         self.timeline_cache: Optional[TimelineResponse] = None
         self.timeline_cache_time: Optional[float] = None
         self.timeline_cache_ttl: float = 30.0
+        self.cache_warming_in_progress: bool = False
+        self.last_cache_warm_time: Optional[float] = None
     
     async def _calculate_avg_block_time(self, current_height: int) -> float:
         try:
@@ -289,7 +291,11 @@ class InferenceService:
             self.current_epoch_data = response
             self.last_fetch_time = current_time
             
-            asyncio.create_task(self._ensure_participant_caches(epoch_id, participants_stats))
+            asyncio.create_task(self.warm_participant_cache(
+                epoch_data["active_participants"]["participants"],
+                epoch_id,
+                batch_size=10
+            ))
             
             logger.info(f"Fetched current epoch {epoch_id} stats at height {height}: {len(participants_stats)} participants")
             
@@ -343,8 +349,6 @@ class InferenceService:
                     total_rewards_gnk = await self.cache_db.get_epoch_total_rewards(epoch_id)
                 else:
                     asyncio.create_task(self._calculate_and_cache_total_rewards(epoch_id))
-            
-            asyncio.create_task(self._ensure_participant_caches(epoch_id, participants_stats))
             
             return InferenceResponse(
                 epoch_id=epoch_id,
@@ -432,8 +436,6 @@ class InferenceService:
                 is_current=False,
                 total_assigned_rewards_gnk=total_rewards_gnk
             )
-            
-            asyncio.create_task(self._ensure_participant_caches(epoch_id, participants_stats))
             
             logger.info(f"Fetched and cached historical epoch {epoch_id} at height {target_height}: {len(participants_stats)} participants")
             
@@ -645,16 +647,23 @@ class InferenceService:
             
             is_current = (epoch_id == current_epoch_id)
             
-            if is_current:
-                stats = await self.get_current_epoch_stats()
-            else:
-                stats = await self.get_historical_epoch_stats(epoch_id, height)
-            
             participant = None
-            for p in stats.participants:
-                if p.index == participant_id:
-                    participant = p
-                    break
+            if is_current and self.current_epoch_data:
+                for p in self.current_epoch_data.participants:
+                    if p.index == participant_id:
+                        participant = p
+                        break
+            
+            if not participant:
+                if is_current:
+                    stats = await self.get_current_epoch_stats()
+                else:
+                    stats = await self.get_historical_epoch_stats(epoch_id, height)
+                
+                for p in stats.participants:
+                    if p.index == participant_id:
+                        participant = p
+                        break
             
             if not participant:
                 return None
@@ -853,7 +862,7 @@ class InferenceService:
         except Exception as e:
             logger.error(f"Error polling participant rewards: {e}")
     
-    async def poll_warm_keys(self):
+    async def poll_warm_keys(self, batch_size: int = 10, check_cache: bool = True):
         try:
             logger.info("Polling warm keys")
             
@@ -861,23 +870,36 @@ class InferenceService:
             current_epoch = epoch_data["active_participants"]["epoch_group_id"]
             participants = epoch_data["active_participants"]["participants"]
             
-            for participant in participants:
+            async def fetch_warm_key(participant):
                 participant_id = participant["index"]
-                
                 try:
+                    if check_cache:
+                        cached = await self.cache_db.get_warm_keys(current_epoch, participant_id)
+                        if cached is not None:
+                            return None
+                    
                     warm_keys = await self.client.get_authz_grants(participant_id)
                     await self.cache_db.save_warm_keys_batch(current_epoch, participant_id, warm_keys)
                     logger.debug(f"Updated {len(warm_keys)} warm keys for {participant_id}")
+                    return True
                 except Exception as e:
                     logger.debug(f"Failed to fetch warm keys for {participant_id}: {e}")
-                    continue
+                    return False
             
-            logger.info(f"Completed warm keys polling for {len(participants)} participants")
+            fetched_count = 0
+            for i in range(0, len(participants), batch_size):
+                batch = participants[i:i+batch_size]
+                results = await asyncio.gather(*[fetch_warm_key(p) for p in batch], return_exceptions=True)
+                success_count = sum(1 for r in results if r is True)
+                fetched_count += success_count
+                logger.debug(f"Warm keys batch {i//batch_size + 1}: {success_count}/{len(batch)} fetched")
+            
+            logger.info(f"Completed warm keys polling: {fetched_count} fetched, {len(participants) - fetched_count} cached")
             
         except Exception as e:
             logger.error(f"Error polling warm keys: {e}")
     
-    async def poll_hardware_nodes(self):
+    async def poll_hardware_nodes(self, batch_size: int = 10, check_cache: bool = True):
         try:
             logger.info("Polling hardware nodes")
             
@@ -885,21 +907,95 @@ class InferenceService:
             current_epoch = epoch_data["active_participants"]["epoch_group_id"]
             participants = epoch_data["active_participants"]["participants"]
             
-            for participant in participants:
+            async def fetch_hardware_node(participant):
                 participant_id = participant["index"]
-                
                 try:
+                    if check_cache:
+                        cached = await self.cache_db.get_hardware_nodes(current_epoch, participant_id)
+                        if cached is not None:
+                            return None
+                    
                     hardware_nodes = await self.client.get_hardware_nodes(participant_id)
                     await self.cache_db.save_hardware_nodes_batch(current_epoch, participant_id, hardware_nodes)
                     logger.debug(f"Updated {len(hardware_nodes)} hardware nodes for {participant_id}")
+                    return True
                 except Exception as e:
                     logger.debug(f"Failed to fetch hardware nodes for {participant_id}: {e}")
-                    continue
+                    return False
             
-            logger.info(f"Completed hardware nodes polling for {len(participants)} participants")
+            fetched_count = 0
+            for i in range(0, len(participants), batch_size):
+                batch = participants[i:i+batch_size]
+                results = await asyncio.gather(*[fetch_hardware_node(p) for p in batch], return_exceptions=True)
+                success_count = sum(1 for r in results if r is True)
+                fetched_count += success_count
+                logger.debug(f"Hardware nodes batch {i//batch_size + 1}: {success_count}/{len(batch)} fetched")
+            
+            logger.info(f"Completed hardware nodes polling: {fetched_count} fetched, {len(participants) - fetched_count} cached")
             
         except Exception as e:
             logger.error(f"Error polling hardware nodes: {e}")
+    
+    async def warm_participant_cache(self, participants: List[Dict[str, Any]], current_epoch: int, batch_size: int = 10):
+        current_time = time.time()
+        
+        if self.cache_warming_in_progress:
+            logger.debug("Cache warming already in progress, skipping")
+            return
+        
+        if self.last_cache_warm_time and (current_time - self.last_cache_warm_time) < 60:
+            logger.debug("Cache warming ran recently, skipping")
+            return
+        
+        self.cache_warming_in_progress = True
+        self.last_cache_warm_time = current_time
+        
+        try:
+            logger.info(f"Starting cache warming for {len(participants)} participants")
+            
+            total_warm_keys = 0
+            total_hardware = 0
+            
+            async def warm_warm_keys(participant):
+                participant_id = participant["index"]
+                try:
+                    cached = await self.cache_db.get_warm_keys(current_epoch, participant_id)
+                    if cached is None:
+                        warm_keys = await self.client.get_authz_grants(participant_id)
+                        await self.cache_db.save_warm_keys_batch(current_epoch, participant_id, warm_keys)
+                        return True
+                except Exception as e:
+                    logger.debug(f"Failed to warm warm_keys for {participant_id}: {e}")
+                return False
+            
+            for i in range(0, len(participants), batch_size):
+                batch = participants[i:i+batch_size]
+                results = await asyncio.gather(*[warm_warm_keys(p) for p in batch], return_exceptions=True)
+                total_warm_keys += sum(1 for r in results if r is True)
+            
+            async def warm_hardware(participant):
+                participant_id = participant["index"]
+                try:
+                    cached = await self.cache_db.get_hardware_nodes(current_epoch, participant_id)
+                    if cached is None:
+                        hardware_nodes = await self.client.get_hardware_nodes(participant_id)
+                        await self.cache_db.save_hardware_nodes_batch(current_epoch, participant_id, hardware_nodes)
+                        return True
+                except Exception as e:
+                    logger.debug(f"Failed to warm hardware_nodes for {participant_id}: {e}")
+                return False
+            
+            for i in range(0, len(participants), batch_size):
+                batch = participants[i:i+batch_size]
+                results = await asyncio.gather(*[warm_hardware(p) for p in batch], return_exceptions=True)
+                total_hardware += sum(1 for r in results if r is True)
+            
+            logger.info(f"Cache warming completed: {total_warm_keys} warm_keys, {total_hardware} hardware_nodes fetched")
+            
+        except Exception as e:
+            logger.error(f"Error during cache warming: {e}")
+        finally:
+            self.cache_warming_in_progress = False
     
     async def _calculate_and_cache_total_rewards(self, epoch_id: int):
         try:
@@ -984,51 +1080,6 @@ class InferenceService:
             
         except Exception as e:
             logger.error(f"Error polling epoch total rewards: {e}")
-    
-    async def _ensure_participant_caches(self, epoch_id: int, participants: List[ParticipantStats]):
-        try:
-            logger.info(f"Ensuring participant caches for epoch {epoch_id} ({len(participants)} participants)")
-            
-            for participant in participants:
-                participant_id = participant.index
-                
-                cached_reward = await self.cache_db.get_reward(epoch_id, participant_id)
-                if cached_reward is None:
-                    try:
-                        summary = await self.client.get_epoch_performance_summary(epoch_id, participant_id)
-                        perf = summary.get("epochPerformanceSummary", {})
-                        await self.cache_db.save_reward_batch([{
-                            "epoch_id": epoch_id,
-                            "participant_id": participant_id,
-                            "rewarded_coins": perf.get("rewarded_coins", "0"),
-                            "claimed": perf.get("claimed", False)
-                        }])
-                        logger.debug(f"Cached reward for {participant_id} in epoch {epoch_id}")
-                    except Exception as e:
-                        logger.debug(f"Failed to cache reward for {participant_id}: {e}")
-                
-                cached_warm_keys = await self.cache_db.get_warm_keys(epoch_id, participant_id)
-                if cached_warm_keys is None:
-                    try:
-                        warm_keys = await self.client.get_authz_grants(participant_id)
-                        await self.cache_db.save_warm_keys_batch(epoch_id, participant_id, warm_keys)
-                        logger.debug(f"Cached {len(warm_keys)} warm keys for {participant_id}")
-                    except Exception as e:
-                        logger.debug(f"Failed to cache warm keys for {participant_id}: {e}")
-                
-                cached_hardware = await self.cache_db.get_hardware_nodes(epoch_id, participant_id)
-                if cached_hardware is None:
-                    try:
-                        hardware_nodes = await self.client.get_hardware_nodes(participant_id)
-                        await self.cache_db.save_hardware_nodes_batch(epoch_id, participant_id, hardware_nodes)
-                        logger.debug(f"Cached {len(hardware_nodes)} hardware nodes for {participant_id}")
-                    except Exception as e:
-                        logger.debug(f"Failed to cache hardware nodes for {participant_id}: {e}")
-            
-            logger.info(f"Completed participant cache population for epoch {epoch_id}")
-            
-        except Exception as e:
-            logger.error(f"Error ensuring participant caches: {e}")
     
     async def get_timeline(self):
         current_time = time.time()

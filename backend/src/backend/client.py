@@ -5,6 +5,7 @@ from typing import List, Dict, Any, Optional, Tuple
 import logging
 import time
 import bech32
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -380,7 +381,8 @@ class GonkaClient:
     async def get_all_inferences(
         self, 
         epoch_id: Optional[int] = None,
-        limit: int = 500
+        limit: int = 500,
+        page_delay: int = 20
     ) -> List[Dict[str, Any]]:
         inferences = []
         next_key = None
@@ -419,6 +421,9 @@ class GonkaClient:
             
             if not next_key:
                 break
+            
+            logger.info(f"Waiting {page_delay}s before next page to avoid rate limiting")
+            await asyncio.sleep(page_delay)
         
         logger.info(f"Fetched {page_count} pages, {total_fetched} total inferences, {total_filtered} filtered, {len(inferences)} kept")
         return inferences

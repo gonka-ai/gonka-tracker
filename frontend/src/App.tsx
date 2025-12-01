@@ -16,6 +16,7 @@ function App() {
   const [selectedEpochId, setSelectedEpochId] = useState<number | null>(null)
   const [currentEpochId, setCurrentEpochId] = useState<number | null>(null)
   const [selectedParticipantId, setSelectedParticipantId] = useState<string | null>(null)
+  const [participantFilter, setParticipantFilter] = useState<string[]>([])
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
   const { prefetchAll } = usePrefetch()
@@ -59,6 +60,18 @@ function App() {
     const pageParam = params.get('page')
     const epochParam = params.get('epoch')
     const participantParam = params.get('participant')
+    const participantsParam = params.get('participants')
+
+    if (participantsParam) {
+      const parsed = participantsParam
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+      if (parsed.length > 0) {
+        const unique = Array.from(new Set(parsed))
+        setParticipantFilter(unique)
+      }
+    }
     
     if (pageParam === 'timeline') {
       setCurrentPage('timeline')
@@ -85,6 +98,20 @@ function App() {
       setSelectedParticipantId(participantParam)
     }
   }, [])
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (participantFilter.length === 0) {
+      params.delete('participants')
+    } else {
+      params.set('participants', participantFilter.join(','))
+    }
+
+    const newUrl = params.toString() 
+      ? `${window.location.pathname}?${params.toString()}`
+      : window.location.pathname
+    window.history.replaceState({}, '', newUrl)
+  }, [participantFilter])
+
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -351,6 +378,8 @@ function App() {
                   currentEpochId={currentEpochId}
                   selectedParticipantId={selectedParticipantId}
                   onParticipantSelect={handleParticipantSelect}
+                  participantFilter={participantFilter}
+                  onFilterChange={setParticipantFilter}
                 />
               </div>
             </>

@@ -1,5 +1,6 @@
 import { Participant } from '../types/inference'
 import { ParticipantModal } from './ParticipantModal'
+import { ParticipantFilter } from './ParticipantFilter'
 
 interface ParticipantTableProps {
   participants: Participant[]
@@ -8,6 +9,8 @@ interface ParticipantTableProps {
   currentEpochId: number | null
   selectedParticipantId?: string | null
   onParticipantSelect: (participantId: string | null) => void
+  participantFilter: string[]
+  onFilterChange: (indexes: string[]) => void
 }
 
 const criticalThresholds = [
@@ -58,8 +61,20 @@ function missedStatTest(nMissed: number, nTotal: number): boolean {
   return nMissed <= lastThreshold.critical
 }
 
-export function ParticipantTable({ participants, epochId, isCurrentEpoch, currentEpochId, selectedParticipantId, onParticipantSelect }: ParticipantTableProps) {
+export function ParticipantTable({
+  participants,
+  epochId,
+  isCurrentEpoch,
+  currentEpochId,
+  selectedParticipantId,
+  onParticipantSelect,
+  participantFilter,
+  onFilterChange
+}: ParticipantTableProps) {
   const sortedParticipants = [...participants].sort((a, b) => b.weight - a.weight)
+  const visibleParticipants = participantFilter.length === 0
+    ? sortedParticipants
+    : sortedParticipants.filter((participant) => participantFilter.includes(participant.index))
 
   const shouldHighlightRed = (participant: Participant) => {
     const lowConfirmation = participant.confirmation_poc_ratio !== null && 
@@ -91,9 +106,30 @@ export function ParticipantTable({ participants, epochId, isCurrentEpoch, curren
     ? participants.find(p => p.index === selectedParticipantId) || null
     : null
 
+  const hasActiveFilter = participantFilter.length > 0
+  const noMatches = hasActiveFilter && visibleParticipants.length === 0
+
   return (
-    <div className="overflow-x-auto border border-gray-200 rounded-md">
-      <table className="min-w-full divide-y divide-gray-200">
+    <>
+      <div className="mb-4 flex flex-col gap-2">
+        <ParticipantFilter
+          participants={participants}
+          selectedIndexes={participantFilter}
+          onChange={onFilterChange}
+        />
+        {hasActiveFilter && !noMatches && (
+          <p className="text-xs text-gray-500">
+            Showing {visibleParticipants.length} of {participants.length} participants
+          </p>
+        )}
+        {noMatches && (
+          <p className="text-xs text-red-600">
+            No participants in this epoch match the current filter.
+          </p>
+        )}
+      </div>
+      <div className="overflow-x-auto border border-gray-200 rounded-md">
+        <table className="min-w-full divide-y divide-gray-200">
         <thead className="bg-gray-50">
           <tr>
             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">
@@ -132,7 +168,7 @@ export function ParticipantTable({ participants, epochId, isCurrentEpoch, curren
           </tr>
         </thead>
         <tbody className="bg-white divide-y divide-gray-200">
-          {sortedParticipants.map((participant) => {
+          {visibleParticipants.map((participant) => {
             const totalInferenced = parseInt(participant.current_epoch_stats.inference_count) + 
                                    parseInt(participant.current_epoch_stats.missed_requests)
             
@@ -240,16 +276,17 @@ export function ParticipantTable({ participants, epochId, isCurrentEpoch, curren
             )
           })}
         </tbody>
-      </table>
+        </table>
 
-      <ParticipantModal 
-        participant={selectedParticipant}
-        epochId={epochId}
-        isCurrentEpoch={isCurrentEpoch}
-        currentEpochId={currentEpochId}
-        onClose={handleCloseModal} 
-      />
-    </div>
+        <ParticipantModal 
+          participant={selectedParticipant}
+          epochId={epochId}
+          isCurrentEpoch={isCurrentEpoch}
+          currentEpochId={currentEpochId}
+          onClose={handleCloseModal} 
+        />
+      </div>
+    </>
   )
 }
 

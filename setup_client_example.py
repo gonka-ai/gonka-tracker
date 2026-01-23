@@ -17,7 +17,7 @@ import sys
 # Or set it via environment variable:
 #   export GONKA_PRIVATE_KEY="0x1234567890abcdef..."  # 64 hex chars
 
-PRIVATE_KEY = os.getenv("GONKA_PRIVATE_KEY", "0xc9db1cb9ec3f247323a954322305926b10963eabc5e085f62af95eeab276a881")
+PRIVATE_KEY = os.getenv("GONKA_PRIVATE_KEY")
 
 if not PRIVATE_KEY:
     print("ERROR: GONKA_PRIVATE_KEY environment variable not set!")

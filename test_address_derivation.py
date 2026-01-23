@@ -10,7 +10,7 @@ from eth_account import Account
 Account.enable_unaudited_hdwallet_features()
 
 # Your private key
-PRIVATE_KEY = os.getenv("GONKA_PRIVATE_KEY", "c9db1cb9ec3f247323a954322305926b10963eabc5e085f62af95eeab276a881")
+PRIVATE_KEY = os.getenv("GONKA_PRIVATE_KEY")
 
 # Remove 0x prefix if present
 if PRIVATE_KEY.startswith("0x"):

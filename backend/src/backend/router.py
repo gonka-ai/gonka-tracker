@@ -152,3 +152,90 @@ async def get_participant_inferences(
             detail=f"Failed to fetch inferences: {str(e)}"
         )
 
+
+@router.post("/test/alert")
+async def test_alert():
+    from backend.email_alert import EmailAlert
+    from backend.webhook_alert import WebhookAlert
+    
+    email_alert = EmailAlert()
+    webhook_alert = WebhookAlert()
+    
+    subject = "Test Alert: Block Height Growth Stagnation"
+    message = (
+        "This is a test alert to verify the notification system is working.\n\n"
+        "Current block height: TEST\n"
+        "Last growth detected: TEST seconds ago\n"
+        "Timestamp: TEST"
+    )
+    
+    results = {}
+    
+    if email_alert.enabled:
+        results["email"] = await email_alert.send_alert(subject, message)
+    else:
+        results["email"] = "not configured"
+    
+    if webhook_alert.enabled:
+        results["webhook"] = await webhook_alert.send_alert(subject, message)
+    else:
+        results["webhook"] = "not configured"
+    
+    return {
+        "message": "Test alert sent",
+        "results": results
+    }
+
+
+@router.get("/test/block-height-status")
+async def get_block_height_status():
+    if inference_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        current_height = await inference_service.client.get_latest_height()
+        return {
+            "current_height": current_height,
+            "monitoring_active": True,
+            "note": "Check logs for 'Block height increased' or 'Block height unchanged' messages to see monitoring activity"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get block height: {str(e)}")
+
+
+@router.post("/test/simulate-block-stagnation")
+async def simulate_block_stagnation():
+    """Simulate block stagnation by fixing the height at current value for testing"""
+    import backend.app as app_module
+    
+    if app_module.inference_service_instance is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    try:
+        current_height = await app_module.inference_service_instance.client.get_latest_height()
+        
+        app_module.block_height_test_mode = True
+        app_module.block_height_test_fixed_height = current_height
+        
+        return {
+            "message": f"Block stagnation simulation enabled. Height fixed at {current_height}",
+            "fixed_height": current_height,
+            "note": "Monitoring will now see the same height repeatedly, triggering alert after threshold. Use POST /v1/test/disable-block-stagnation to disable."
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to simulate stagnation: {str(e)}")
+
+
+@router.post("/test/disable-block-stagnation")
+async def disable_block_stagnation():
+    """Disable block stagnation simulation"""
+    import backend.app as app_module
+    
+    app_module.block_height_test_mode = False
+    app_module.block_height_test_fixed_height = None
+    
+    return {
+        "message": "Block stagnation simulation disabled. Monitoring will use real block heights.",
+        "test_mode": False
+    }
+

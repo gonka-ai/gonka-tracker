@@ -8,6 +8,8 @@ from backend.router import router, set_inference_service
 from backend.client import GonkaClient
 from backend.database import CacheDB
 from backend.service import InferenceService
+from backend.email_alert import EmailAlert
+from backend.webhook_alert import WebhookAlert
 
 logging.basicConfig(
     level=logging.INFO,
@@ -28,6 +30,9 @@ POLL_PARTICIPANT_INFERENCES_INTERVAL = int(os.getenv("POLL_PARTICIPANT_INFERENCE
 POLL_MODELS_API_INTERVAL = int(os.getenv("POLL_MODELS_API_INTERVAL", "300"))
 POLL_TIMELINE_INTERVAL = int(os.getenv("POLL_TIMELINE_INTERVAL", "30"))
 POLL_CONFIRMATION_DATA_INTERVAL = int(os.getenv("POLL_CONFIRMATION_DATA_INTERVAL", "120"))
+BLOCK_HEIGHT_CHECK_INTERVAL = int(os.getenv("BLOCK_HEIGHT_CHECK_INTERVAL", "30"))
+BLOCK_HEIGHT_ALERT_THRESHOLD = int(os.getenv("BLOCK_HEIGHT_ALERT_THRESHOLD", "120"))
+BLOCK_HEIGHT_REMINDER_INTERVAL = int(os.getenv("BLOCK_HEIGHT_REMINDER_INTERVAL", "300"))
 
 background_task = None
 jail_polling_task = None
@@ -40,7 +45,12 @@ participant_inferences_polling_task = None
 models_api_polling_task = None
 timeline_polling_task = None
 confirmation_polling_task = None
+block_height_monitoring_task = None
 inference_service_instance = None
+email_alert_instance = None
+webhook_alert_instance = None
+block_height_test_mode = False
+block_height_test_fixed_height = None
 
 
 async def poll_current_epoch():
@@ -204,9 +214,88 @@ async def poll_confirmation_data():
         await asyncio.sleep(POLL_CONFIRMATION_DATA_INTERVAL)
 
 
+async def monitor_block_height():
+    import time
+    
+    await asyncio.sleep(10)
+    
+    last_height = None
+    last_height_time = None
+    last_alert_time = None
+    
+    while True:
+        try:
+            if inference_service_instance:
+                if block_height_test_mode and block_height_test_fixed_height is not None:
+                    current_height = block_height_test_fixed_height
+                    logger.debug(f"Test mode: Using fixed height {current_height}")
+                else:
+                    current_height = await inference_service_instance.client.get_latest_height()
+                current_time = time.time()
+                
+                if last_height is not None:
+                    if current_height > last_height:
+                        old_height = last_height
+                        last_height = current_height
+                        last_height_time = current_time
+                        last_alert_time = None
+                        logger.info(f"Block height increased: {old_height} -> {current_height}")
+                    else:
+                        time_since_last_growth = current_time - last_height_time if last_height_time else 0
+                        time_since_last_alert = current_time - last_alert_time if last_alert_time else float('inf')
+                        
+                        should_send_alert = False
+                        is_reminder = False
+                        
+                        if time_since_last_growth >= BLOCK_HEIGHT_ALERT_THRESHOLD:
+                            if last_alert_time is None:
+                                should_send_alert = True
+                                logger.info(f"Block height unchanged at {current_height} for {int(time_since_last_growth)}s - sending initial alert")
+                            elif time_since_last_alert >= BLOCK_HEIGHT_REMINDER_INTERVAL:
+                                should_send_alert = True
+                                is_reminder = True
+                                logger.info(f"Block height still unchanged at {current_height} for {int(time_since_last_growth)}s - sending reminder alert")
+                        
+                        if should_send_alert:
+                            alert_type = "Reminder: " if is_reminder else ""
+                            subject = f"{alert_type}Alert: No Block Height Growth Detected"
+                            message = (
+                                f"Block height has not increased for {int(time_since_last_growth)} seconds.\n\n"
+                                f"Current block height: {current_height}\n"
+                                f"Last growth detected: {int(time_since_last_growth)} seconds ago\n"
+                                f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
+                            )
+                            
+                            alert_sent_any = False
+                            if email_alert_instance:
+                                if await email_alert_instance.send_alert(subject, message):
+                                    alert_sent_any = True
+                            
+                            if webhook_alert_instance:
+                                if await webhook_alert_instance.send_alert(subject, message):
+                                    alert_sent_any = True
+                            
+                            if alert_sent_any:
+                                last_alert_time = current_time
+                                logger.warning(f"Alert sent: No block height growth for {int(time_since_last_growth)} seconds")
+                            else:
+                                logger.warning(f"No alert channels configured: Block height stuck at {current_height} for {int(time_since_last_growth)} seconds")
+                        else:
+                            logger.debug(f"Block height unchanged at {current_height} for {int(time_since_last_growth)}s (threshold: {BLOCK_HEIGHT_ALERT_THRESHOLD}s, last alert: {int(time_since_last_alert)}s ago)")
+                else:
+                    last_height = current_height
+                    last_height_time = current_time
+                    logger.info(f"Initial block height: {current_height}")
+                    
+        except Exception as e:
+            logger.error(f"Block height monitoring error: {e}")
+        
+        await asyncio.sleep(BLOCK_HEIGHT_CHECK_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global background_task, jail_polling_task, health_polling_task, rewards_polling_task, warm_keys_polling_task, hardware_nodes_polling_task, epoch_total_rewards_polling_task, participant_inferences_polling_task, models_api_polling_task, timeline_polling_task, confirmation_polling_task, inference_service_instance
+    global background_task, jail_polling_task, health_polling_task, rewards_polling_task, warm_keys_polling_task, hardware_nodes_polling_task, epoch_total_rewards_polling_task, participant_inferences_polling_task, models_api_polling_task, timeline_polling_task, confirmation_polling_task, block_height_monitoring_task, inference_service_instance, email_alert_instance, webhook_alert_instance
     
     inference_urls = os.getenv("INFERENCE_URLS", "http://node2.gonka.ai:8000").split(",")
     inference_urls = [url.strip() for url in inference_urls]
@@ -216,14 +305,17 @@ async def lifespan(app: FastAPI):
     logger.info(f"Initializing with URLs: {inference_urls}")
     logger.info(f"Database path: {db_path}")
     logger.info(f"Polling intervals (s): epoch={POLL_CURRENT_EPOCH_INTERVAL}, jail={POLL_JAIL_STATUS_INTERVAL}, health={POLL_NODE_HEALTH_INTERVAL}, rewards={POLL_REWARDS_INTERVAL}")
-    logger.info(f"Polling intervals (s): warm_keys={POLL_WARM_KEYS_INTERVAL}, hardware_nodes={POLL_HARDWARE_NODES_INTERVAL}, total_rewards={POLL_EPOCH_TOTAL_REWARDS_INTERVAL}, inferences={POLL_PARTICIPANT_INFERENCES_INTERVAL}, models_api={POLL_MODELS_API_INTERVAL}, timeline={POLL_TIMELINE_INTERVAL}, confirmation_data={POLL_CONFIRMATION_DATA_INTERVAL}")
+    logger.info(f"Polling intervals (s): warm_keys={POLL_WARM_KEYS_INTERVAL}, hardware_nodes={POLL_HARDWARE_NODES_INTERVAL}, total_rewards={POLL_EPOCH_TOTAL_REWARDS_INTERVAL}, inferences={POLL_PARTICIPANT_INFERENCES_INTERVAL}, models_api={POLL_MODELS_API_INTERVAL}, timeline={POLL_TIMELINE_INTERVAL}, confirmation_data={POLL_CONFIRMATION_DATA_INTERVAL}, block_height={BLOCK_HEIGHT_CHECK_INTERVAL}")
     logger.info(f"Polling batch sizes: warm_keys={POLL_WARM_KEYS_BATCH_SIZE}, hardware_nodes={POLL_HARDWARE_NODES_BATCH_SIZE}")
+    logger.info(f"Block height alert threshold: {BLOCK_HEIGHT_ALERT_THRESHOLD}s, reminder interval: {BLOCK_HEIGHT_REMINDER_INTERVAL}s")
     
     cache_db = CacheDB(db_path)
     await cache_db.initialize()
     
     client = GonkaClient(base_urls=inference_urls)
     inference_service_instance = InferenceService(client=client, cache_db=cache_db)
+    email_alert_instance = EmailAlert()
+    webhook_alert_instance = WebhookAlert()
     
     set_inference_service(inference_service_instance)
     
@@ -238,6 +330,7 @@ async def lifespan(app: FastAPI):
     models_api_polling_task = asyncio.create_task(poll_models_api())
     timeline_polling_task = asyncio.create_task(poll_timeline())
     confirmation_polling_task = asyncio.create_task(poll_confirmation_data())
+    block_height_monitoring_task = asyncio.create_task(monitor_block_height())
     logger.info("Background polling tasks started")
     
     yield
@@ -318,6 +411,13 @@ async def lifespan(app: FastAPI):
             await confirmation_polling_task
         except asyncio.CancelledError:
             logger.info("Confirmation polling task cancelled")
+    
+    if block_height_monitoring_task:
+        block_height_monitoring_task.cancel()
+        try:
+            await block_height_monitoring_task
+        except asyncio.CancelledError:
+            logger.info("Block height monitoring task cancelled")
 
 
 app = FastAPI(lifespan=lifespan)

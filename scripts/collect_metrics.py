@@ -52,6 +52,9 @@ async def get_participant_details(api_url: str, participant_address: str, epoch_
 
 async def write_node_metrics(conn: asyncpg.Connection, inference_data: dict):
     """Write node metrics to PostgreSQL"""
+    if conn.is_closed():
+        raise asyncpg.exceptions.InterfaceError("Connection is closed")
+    
     now = datetime.utcnow()
     epoch_id = inference_data.get("epoch_id")
     height = inference_data.get("height")
@@ -104,6 +107,9 @@ async def write_node_metrics(conn: asyncpg.Connection, inference_data: dict):
 
 async def write_participant_rewards(conn: asyncpg.Connection, api_url: str, participants: list, current_epoch_id: int):
     """Fetch and write historical rewards for participants"""
+    if conn.is_closed():
+        raise asyncpg.exceptions.InterfaceError("Connection is closed")
+    
     now = datetime.utcnow()
     
     # Fetch rewards for each participant (limit to last 10 epochs to avoid too many API calls)
@@ -159,6 +165,9 @@ async def write_participant_rewards(conn: asyncpg.Connection, api_url: str, part
 
 async def write_network_metrics(conn: asyncpg.Connection, inference_data: dict):
     """Write network aggregate metrics to PostgreSQL"""
+    if conn.is_closed():
+        raise asyncpg.exceptions.InterfaceError("Connection is closed")
+    
     now = datetime.utcnow()
     epoch_id = inference_data.get("epoch_id")
     height = inference_data.get("height")
@@ -221,20 +230,52 @@ async def write_network_metrics(conn: asyncpg.Connection, inference_data: dict):
     )
 
 
+async def get_db_connection():
+    """Get a database connection with retry logic"""
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            conn = await asyncpg.connect(
+                host=POSTGRES_HOST,
+                port=POSTGRES_PORT,
+                user=POSTGRES_USER,
+                password=POSTGRES_PASSWORD,
+                database=POSTGRES_DB,
+                timeout=10
+            )
+            return conn
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Failed to connect to database (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+            else:
+                logger.error(f"Failed to connect to database after {max_retries} attempts: {e}")
+                raise
+
+
+async def ensure_connection(conn):
+    """Check if connection is open, reconnect if needed"""
+    if conn.is_closed():
+        logger.warning("Database connection is closed, reconnecting...")
+        return await get_db_connection()
+    return conn
+
+
 async def collect_metrics():
     """Main collection loop"""
-    # Connect to PostgreSQL
-    conn = await asyncpg.connect(
-        host=POSTGRES_HOST,
-        port=POSTGRES_PORT,
-        user=POSTGRES_USER,
-        password=POSTGRES_PASSWORD,
-        database=POSTGRES_DB
-    )
+    conn = None
     
     try:
+        conn = await get_db_connection()
+        logger.info("Connected to PostgreSQL database")
+        
         while True:
             try:
+                # Ensure connection is still open
+                conn = await ensure_connection(conn)
+                
                 # Fetch data from API
                 logger.info("Fetching inference data from API...")
                 inference_data = await get_inference_data(API_URL)
@@ -254,6 +295,14 @@ async def collect_metrics():
                 
                 logger.info("Metrics written successfully")
                 
+            except asyncpg.exceptions.InterfaceError as e:
+                logger.warning(f"Database connection error: {e}. Will reconnect on next iteration.")
+                if conn:
+                    try:
+                        await conn.close()
+                    except:
+                        pass
+                    conn = None
             except Exception as e:
                 logger.error(f"Error collecting metrics: {e}", exc_info=True)
             
@@ -261,7 +310,9 @@ async def collect_metrics():
             await asyncio.sleep(COLLECT_INTERVAL)
     
     finally:
-        await conn.close()
+        if conn and not conn.is_closed():
+            await conn.close()
+            logger.info("Database connection closed")
 
 
 if __name__ == "__main__":

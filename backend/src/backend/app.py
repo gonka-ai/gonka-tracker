@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.router import router, set_inference_service
 from backend.client import GonkaClient
 from backend.database import CacheDB
+from backend.postgres_db import PostgresDB
 from backend.service import InferenceService
 from backend.email_alert import EmailAlert
 from backend.webhook_alert import WebhookAlert
@@ -295,7 +296,7 @@ async def monitor_block_height():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global background_task, jail_polling_task, health_polling_task, rewards_polling_task, warm_keys_polling_task, hardware_nodes_polling_task, epoch_total_rewards_polling_task, participant_inferences_polling_task, models_api_polling_task, timeline_polling_task, confirmation_polling_task, block_height_monitoring_task, inference_service_instance, email_alert_instance, webhook_alert_instance
+    global background_task, jail_polling_task, health_polling_task, rewards_polling_task, warm_keys_polling_task, hardware_nodes_polling_task, epoch_total_rewards_polling_task, participant_inferences_polling_task, models_api_polling_task, timeline_polling_task, confirmation_polling_task, block_height_monitoring_task, inference_service_instance, email_alert_instance, webhook_alert_instance, postgres_db_instance
     
     inference_urls = os.getenv("INFERENCE_URLS", "http://node2.gonka.ai:8000").split(",")
     inference_urls = [url.strip() for url in inference_urls]
@@ -312,8 +313,17 @@ async def lifespan(app: FastAPI):
     cache_db = CacheDB(db_path)
     await cache_db.initialize()
     
+    postgres_db_instance = None
+    try:
+        postgres_db_instance = PostgresDB()
+        await postgres_db_instance.initialize()
+        logger.info("PostgreSQL database initialized for unified storage")
+    except Exception as e:
+        logger.warning(f"Failed to initialize PostgreSQL (metrics will not be written): {e}")
+        logger.warning("Continuing with SQLite cache only. Check PostgreSQL configuration.")
+    
     client = GonkaClient(base_urls=inference_urls)
-    inference_service_instance = InferenceService(client=client, cache_db=cache_db)
+    inference_service_instance = InferenceService(client=client, cache_db=cache_db, postgres_db=postgres_db_instance)
     email_alert_instance = EmailAlert()
     webhook_alert_instance = WebhookAlert()
     
@@ -418,6 +428,10 @@ async def lifespan(app: FastAPI):
             await block_height_monitoring_task
         except asyncio.CancelledError:
             logger.info("Block height monitoring task cancelled")
+    
+    if postgres_db_instance:
+        await postgres_db_instance.close()
+        logger.info("PostgreSQL connection closed")
 
 
 app = FastAPI(lifespan=lifespan)

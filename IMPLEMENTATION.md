@@ -86,6 +86,22 @@ POSTGRES_PASSWORD=postgres
 POSTGRES_DB=gonka_tracker
 ```
 
+**Important:** In Docker, `POSTGRES_HOST` must be `postgres` (the service name). Backend now waits for Postgres to be healthy before starting (`depends_on: postgres` in docker-compose).
+
+## No data in Grafana
+
+Grafana dashboards read from PostgreSQL only. Data is written by the **backend** when it polls the Gonka API. If everything shows no data:
+
+1. **Backend must connect to Postgres.** Ensure `config.env` has `POSTGRES_HOST=postgres`. Backend starts only after Postgres is healthy.
+2. **Check that tables have data and the time range:**
+   ```bash
+   ./scripts/check_db.sh
+   ```
+   If row counts are 0, backend is not writing (check backend logs for "PostgreSQL database initialized" and for API polling).
+3. **Grafana time range** must overlap the data. In the script output, use "earliest" and "latest" and set the dashboard time picker to include that range (e.g. "Last 24 hours" or a custom range).
+
+**Participant Rewards Over Time** uses `participant_rewards_metrics`. That table is filled by the backend when it polls participant rewards (`poll_rewards`) and when it calculates epoch total rewards (`poll_epoch_total_rewards`). The backend now writes participant rows even when an epoch has 0 total rewards, so the dashboard can show participants with 0 reward. If the dashboard still shows no data, run `./scripts/check_db.sh` and confirm `participant_rewards_metrics` has rows; if it does, widen the dashboard time range.
+
 ## Migration Status
 
 ### Phase 1: ✅ Complete

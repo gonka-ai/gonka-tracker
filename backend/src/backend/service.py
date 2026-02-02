@@ -1093,15 +1093,15 @@ class InferenceService:
                     logger.debug(f"Could not fetch reward for {participant_id} in epoch {epoch_id}: {e}")
                     continue
             
-            if total_ugnk == 0 and fetched_count > 0:
-                logger.warning(f"Epoch {epoch_id} rewards calculation returned 0 for all {fetched_count} participants - rewards may not be available yet, skipping cache")
-                return
-            
             if rewards_batch:
                 await self.cache_db.save_reward_batch(rewards_batch)
                 if self.postgres_db:
                     await self.postgres_db.write_participant_rewards_metrics(rewards_batch)
                 logger.debug(f"Cached {len(rewards_batch)} participant rewards during total calculation")
+            
+            if total_ugnk == 0 and fetched_count > 0:
+                logger.warning(f"Epoch {epoch_id} rewards calculation returned 0 for all {fetched_count} participants - rewards may not be available yet, skipping total cache")
+                return
             
             total_gnk = total_ugnk // 1_000_000_000
             

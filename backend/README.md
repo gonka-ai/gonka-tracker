@@ -88,6 +88,10 @@ The "no rewards recorded" alert runs in the background. To verify it without wai
    ```
    With an empty or backdated `participant_rewards_metrics`, the monitor will send an alert after the grace period, then again every `REWARDS_ALERT_REMINDER_INTERVAL` if still no data.
 
+### Chain/API unreachable alert
+
+When `get_current_epoch_stats()` fails N times in a row (no cached response), the backend sends "Chain/API unreachable" via Discord/email. Config: `EPOCH_FETCH_ALERT_CONSECUTIVE_THRESHOLD` (default 3), `EPOCH_FETCH_ALERT_REMINDER_INTERVAL` (default 3600s). Check status: `GET /v1/test/epoch-fetch-status` returns `consecutive_failures`, `alert_threshold`, and `would_alert`.
+
 ## API
 
 ### Base

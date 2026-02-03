@@ -189,15 +189,26 @@ async def test_alert():
 
 @router.get("/test/block-height-status")
 async def get_block_height_status():
+    import time
+    import backend.app as app_module
+
     if inference_service is None:
         raise HTTPException(status_code=503, detail="Service not initialized")
-    
+
     try:
-        current_height = await inference_service.client.get_latest_height()
+        sync_info = await inference_service.client.get_status_sync_info()
+        current_height = sync_info["latest_block_height"]
+        latest_block_time = sync_info.get("latest_block_time")
+        now = time.time()
+        time_since_last_block_seconds = int(now - latest_block_time) if latest_block_time is not None else None
+        threshold = app_module.BLOCK_HEIGHT_ALERT_THRESHOLD
         return {
             "current_height": current_height,
+            "time_since_last_block_seconds": time_since_last_block_seconds,
+            "alert_threshold_seconds": threshold,
+            "would_alert": time_since_last_block_seconds is not None and time_since_last_block_seconds >= threshold,
             "monitoring_active": True,
-            "note": "Check logs for 'Block height increased' or 'Block height unchanged' messages to see monitoring activity"
+            "note": "Alert fires when time_since_last_block_seconds >= alert_threshold_seconds.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get block height: {str(e)}")
@@ -237,6 +248,24 @@ async def disable_block_stagnation():
     return {
         "message": "Block stagnation simulation disabled. Monitoring will use real block heights.",
         "test_mode": False
+    }
+
+
+@router.get("/test/epoch-fetch-status")
+async def get_epoch_fetch_status():
+    """Return consecutive get_current_epoch_stats failures and whether Chain/API unreachable alert would fire."""
+    import backend.app as app_module
+
+    if app_module.inference_service_instance is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    consecutive = app_module.consecutive_epoch_fetch_failures
+    threshold = app_module.EPOCH_FETCH_ALERT_CONSECUTIVE_THRESHOLD
+    return {
+        "consecutive_failures": consecutive,
+        "alert_threshold": threshold,
+        "would_alert": consecutive >= threshold,
+        "note": "Alert fires when get_current_epoch_stats fails this many times in a row. Resets on next success.",
     }
 
 

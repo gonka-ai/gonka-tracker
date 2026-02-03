@@ -34,6 +34,10 @@ POLL_CONFIRMATION_DATA_INTERVAL = int(os.getenv("POLL_CONFIRMATION_DATA_INTERVAL
 BLOCK_HEIGHT_CHECK_INTERVAL = int(os.getenv("BLOCK_HEIGHT_CHECK_INTERVAL", "30"))
 BLOCK_HEIGHT_ALERT_THRESHOLD = int(os.getenv("BLOCK_HEIGHT_ALERT_THRESHOLD", "120"))
 BLOCK_HEIGHT_REMINDER_INTERVAL = int(os.getenv("BLOCK_HEIGHT_REMINDER_INTERVAL", "300"))
+REWARDS_ALERT_CHECK_INTERVAL = int(os.getenv("REWARDS_ALERT_CHECK_INTERVAL", "600"))
+REWARDS_ALERT_WINDOW_HOURS = float(os.getenv("REWARDS_ALERT_WINDOW_HOURS", "24"))
+REWARDS_ALERT_REMINDER_INTERVAL = int(os.getenv("REWARDS_ALERT_REMINDER_INTERVAL", "3600"))
+REWARDS_ALERT_GRACE_SECONDS = int(os.getenv("REWARDS_ALERT_GRACE_SECONDS", "1800"))
 
 background_task = None
 jail_polling_task = None
@@ -47,6 +51,7 @@ models_api_polling_task = None
 timeline_polling_task = None
 confirmation_polling_task = None
 block_height_monitoring_task = None
+rewards_monitoring_task = None
 inference_service_instance = None
 email_alert_instance = None
 webhook_alert_instance = None
@@ -294,9 +299,54 @@ async def monitor_block_height():
         await asyncio.sleep(BLOCK_HEIGHT_CHECK_INTERVAL)
 
 
+async def monitor_rewards():
+    import time
+    global postgres_db_instance, email_alert_instance, webhook_alert_instance
+    await asyncio.sleep(REWARDS_ALERT_GRACE_SECONDS)
+    last_alert_time = None
+    startup_time = time.time()
+    while True:
+        try:
+            if postgres_db_instance and (time.time() - startup_time) >= REWARDS_ALERT_GRACE_SECONDS:
+                count = await postgres_db_instance.count_rewards_since_hours(REWARDS_ALERT_WINDOW_HOURS)
+                current_time = time.time()
+                time_since_last_alert = current_time - last_alert_time if last_alert_time else float("inf")
+                if count == 0:
+                    should_send = False
+                    is_reminder = False
+                    if last_alert_time is None:
+                        should_send = True
+                        logger.info("No reward records in the last %s hours - sending initial alert", REWARDS_ALERT_WINDOW_HOURS)
+                    elif time_since_last_alert >= REWARDS_ALERT_REMINDER_INTERVAL:
+                        should_send = True
+                        is_reminder = True
+                        logger.info("No reward records in the last %s hours - sending reminder alert", REWARDS_ALERT_WINDOW_HOURS)
+                    if should_send:
+                        alert_type = "Reminder: " if is_reminder else ""
+                        subject = f"{alert_type}Alert: No Rewards Recorded"
+                        message = (
+                            f"No participant rewards have been recorded in the last {REWARDS_ALERT_WINDOW_HOURS} hours.\n\n"
+                            f"Check rewards polling and chain API.\n"
+                            f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
+                        )
+                        alert_sent = False
+                        if email_alert_instance and await email_alert_instance.send_alert(subject, message):
+                            alert_sent = True
+                        if webhook_alert_instance and await webhook_alert_instance.send_alert(subject, message):
+                            alert_sent = True
+                        if alert_sent:
+                            last_alert_time = current_time
+                            logger.warning("Alert sent: No rewards in the last %s hours", REWARDS_ALERT_WINDOW_HOURS)
+                else:
+                    last_alert_time = None
+        except Exception as e:
+            logger.error("Rewards monitoring error: %s", e)
+        await asyncio.sleep(REWARDS_ALERT_CHECK_INTERVAL)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global background_task, jail_polling_task, health_polling_task, rewards_polling_task, warm_keys_polling_task, hardware_nodes_polling_task, epoch_total_rewards_polling_task, participant_inferences_polling_task, models_api_polling_task, timeline_polling_task, confirmation_polling_task, block_height_monitoring_task, inference_service_instance, email_alert_instance, webhook_alert_instance, postgres_db_instance
+    global background_task, jail_polling_task, health_polling_task, rewards_polling_task, warm_keys_polling_task, hardware_nodes_polling_task, epoch_total_rewards_polling_task, participant_inferences_polling_task, models_api_polling_task, timeline_polling_task, confirmation_polling_task, block_height_monitoring_task, rewards_monitoring_task, inference_service_instance, email_alert_instance, webhook_alert_instance, postgres_db_instance
     
     inference_urls = os.getenv("INFERENCE_URLS", "http://node2.gonka.ai:8000").split(",")
     inference_urls = [url.strip() for url in inference_urls]
@@ -309,6 +359,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"Polling intervals (s): warm_keys={POLL_WARM_KEYS_INTERVAL}, hardware_nodes={POLL_HARDWARE_NODES_INTERVAL}, total_rewards={POLL_EPOCH_TOTAL_REWARDS_INTERVAL}, inferences={POLL_PARTICIPANT_INFERENCES_INTERVAL}, models_api={POLL_MODELS_API_INTERVAL}, timeline={POLL_TIMELINE_INTERVAL}, confirmation_data={POLL_CONFIRMATION_DATA_INTERVAL}, block_height={BLOCK_HEIGHT_CHECK_INTERVAL}")
     logger.info(f"Polling batch sizes: warm_keys={POLL_WARM_KEYS_BATCH_SIZE}, hardware_nodes={POLL_HARDWARE_NODES_BATCH_SIZE}")
     logger.info(f"Block height alert threshold: {BLOCK_HEIGHT_ALERT_THRESHOLD}s, reminder interval: {BLOCK_HEIGHT_REMINDER_INTERVAL}s")
+    logger.info(f"Rewards alert: check every {REWARDS_ALERT_CHECK_INTERVAL}s, window {REWARDS_ALERT_WINDOW_HOURS}h, reminder {REWARDS_ALERT_REMINDER_INTERVAL}s, grace {REWARDS_ALERT_GRACE_SECONDS}s")
     
     cache_db = CacheDB(db_path)
     await cache_db.initialize()
@@ -341,6 +392,7 @@ async def lifespan(app: FastAPI):
     timeline_polling_task = asyncio.create_task(poll_timeline())
     confirmation_polling_task = asyncio.create_task(poll_confirmation_data())
     block_height_monitoring_task = asyncio.create_task(monitor_block_height())
+    rewards_monitoring_task = asyncio.create_task(monitor_rewards())
     logger.info("Background polling tasks started")
     
     yield
@@ -428,7 +480,14 @@ async def lifespan(app: FastAPI):
             await block_height_monitoring_task
         except asyncio.CancelledError:
             logger.info("Block height monitoring task cancelled")
-    
+
+    if rewards_monitoring_task:
+        rewards_monitoring_task.cancel()
+        try:
+            await rewards_monitoring_task
+        except asyncio.CancelledError:
+            logger.info("Rewards monitoring task cancelled")
+
     if postgres_db_instance:
         await postgres_db_instance.close()
         logger.info("PostgreSQL connection closed")

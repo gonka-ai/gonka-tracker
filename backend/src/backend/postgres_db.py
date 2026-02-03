@@ -813,7 +813,16 @@ class PostgresDB:
             await conn.execute("""
                 DELETE FROM epoch_total_rewards WHERE epoch_id = $1
             """, epoch_id)
-    
+
+    async def count_rewards_since_hours(self, hours: float) -> int:
+        """Return count of participant_rewards_metrics rows in the last N hours"""
+        async with self.pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT COUNT(*) AS n FROM participant_rewards_metrics
+                WHERE time > NOW() - make_interval(hours => $1)
+            """, hours)
+            return row["n"] if row else 0
+
     async def save_models_batch(self, epoch_id: int, models: List[Dict[str, Any]]):
         """Save models cache"""
         async with self.pool.acquire() as conn:

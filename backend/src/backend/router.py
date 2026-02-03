@@ -239,3 +239,63 @@ async def disable_block_stagnation():
         "test_mode": False
     }
 
+
+@router.get("/test/rewards-alert-status")
+async def get_rewards_alert_status():
+    """Return rewards count in the alert window and whether a no-rewards alert would fire."""
+    import backend.app as app_module
+
+    if app_module.postgres_db_instance is None:
+        raise HTTPException(status_code=503, detail="PostgreSQL not initialized")
+
+    try:
+        window_hours = app_module.REWARDS_ALERT_WINDOW_HOURS
+        count = await app_module.postgres_db_instance.count_rewards_since_hours(window_hours)
+        return {
+            "rewards_count_in_window": count,
+            "window_hours": window_hours,
+            "would_alert": count == 0,
+            "note": "Alert fires when count is 0 after grace period. Use short env (e.g. REWARDS_ALERT_WINDOW_HOURS=0.001, REWARDS_ALERT_GRACE_SECONDS=10) to test quickly.",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get rewards alert status: {str(e)}")
+
+
+@router.post("/test/trigger-rewards-alert")
+async def trigger_rewards_alert():
+    """Run one rewards check and send alert if no rewards in window (for testing notifications)."""
+    import backend.app as app_module
+
+    if app_module.postgres_db_instance is None:
+        raise HTTPException(status_code=503, detail="PostgreSQL not initialized")
+
+    try:
+        window_hours = app_module.REWARDS_ALERT_WINDOW_HOURS
+        count = await app_module.postgres_db_instance.count_rewards_since_hours(window_hours)
+        if count > 0:
+            return {
+                "message": "No alert sent: rewards exist in window",
+                "rewards_count_in_window": count,
+                "window_hours": window_hours,
+            }
+        import time
+        subject = "Test/Manual: No Rewards Recorded"
+        message = (
+            f"No participant rewards in the last {window_hours} hours (triggered via /v1/test/trigger-rewards-alert).\n\n"
+            f"Timestamp: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
+        )
+        alert_sent = False
+        if app_module.email_alert_instance and await app_module.email_alert_instance.send_alert(subject, message):
+            alert_sent = True
+        if app_module.webhook_alert_instance and await app_module.webhook_alert_instance.send_alert(subject, message):
+            alert_sent = True
+        return {
+            "message": "Alert sent (no rewards in window)" if alert_sent else "Alert not sent (email/webhook not configured)",
+            "rewards_count_in_window": 0,
+            "window_hours": window_hours,
+            "email_sent": app_module.email_alert_instance is not None and app_module.email_alert_instance.enabled,
+            "webhook_sent": app_module.webhook_alert_instance is not None and app_module.webhook_alert_instance.enabled,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to trigger rewards alert: {str(e)}")
+

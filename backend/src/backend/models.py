@@ -42,6 +42,10 @@ class ParticipantStats(BaseModel):
     confirmation_weight: Optional[int] = None
     confirmation_poc_ratio: Optional[float] = None
     participant_status: Optional[str] = None
+    potential_weight: Optional[int] = None
+    collateral_ratio: Optional[float] = None
+    needed_ngonka: Optional[float] = None
+    collateral_balance: Optional[int] = None  # in ngonka
     
     @computed_field
     @property
@@ -67,6 +71,12 @@ class ParticipantStats(BaseModel):
         return round(invalidated / inferences, 4)
 
 
+class CollateralParams(BaseModel):
+    grace_period_end_epoch: int
+    base_weight_ratio: float
+    collateral_per_weight_unit: float
+
+
 class InferenceResponse(BaseModel):
     epoch_id: int
     height: int
@@ -79,6 +89,8 @@ class InferenceResponse(BaseModel):
     avg_block_time: Optional[float] = None
     next_poc_start_block: Optional[int] = None
     set_new_validators_block: Optional[int] = None
+    collateral_params: Optional[CollateralParams] = None
+    median_weight_per_gpu: Optional[float] = None
 
 
 class EpochParticipant(BaseModel):
@@ -111,7 +123,7 @@ class SeedInfo(BaseModel):
 
 class WarmKeyInfo(BaseModel):
     grantee_address: str
-    granted_at: str
+    expiration: str
 
 
 class HardwareInfo(BaseModel):
@@ -135,6 +147,7 @@ class ParticipantDetailsResponse(BaseModel):
     seed: Optional[SeedInfo]
     warm_keys: List[WarmKeyInfo]
     ml_nodes: List[MLNodeInfo]
+    collateral_balance: Optional[int] = None  # in ngonka
 
 
 class LatestEpochInfo(BaseModel):
@@ -154,6 +167,13 @@ class TimelineEvent(BaseModel):
     occurred: bool
 
 
+class CpocEvent(BaseModel):
+    trigger_height: int
+    end_height: Optional[int] = None
+    epoch_index: int
+    phase: Optional[str] = None
+
+
 class TimelineResponse(BaseModel):
     current_block: BlockInfo
     reference_block: BlockInfo
@@ -164,6 +184,7 @@ class TimelineResponse(BaseModel):
     epoch_length: int
     epoch_stages: Optional[Dict[str, Any]] = None
     next_epoch_stages: Optional[Dict[str, Any]] = None
+    cpoc_events: List[CpocEvent] = []
 
 
 class ModelInfo(BaseModel):

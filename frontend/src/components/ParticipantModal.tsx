@@ -204,7 +204,7 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
                     <div key={idx} className="text-sm">
                       <div className="font-mono text-gray-900 break-all">{warmKey.grantee_address}</div>
                       <div className="text-xs text-gray-500">
-                        Granted: {new Date(warmKey.granted_at).toLocaleString()}
+                        Expires: {new Date(warmKey.expiration).toLocaleString()}
                       </div>
                     </div>
                   ))}
@@ -304,6 +304,44 @@ export function ParticipantModal({ participant, epochId, currentEpochId, onClose
                     )}
                   </div>
                 </div>
+
+                {participant.potential_weight != null && (
+                  <div className="bg-gray-50 p-4 rounded">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Potential Weight</label>
+                    <div className="text-lg font-semibold text-gray-900">{participant.potential_weight.toLocaleString()}</div>
+                  </div>
+                )}
+
+                {(() => {
+                  const balance = participant.collateral_balance ?? details?.collateral_balance ?? 0
+                  const needed = participant.needed_ngonka ?? 0
+                  const isSufficient = balance >= needed
+                  const ratio = needed > 0 ? Math.min(1, balance / needed) : 1
+                  return (
+                    <>
+                      <div className="bg-gray-50 p-4 rounded">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Collateral</label>
+                        <div className={`text-lg font-semibold ${isSufficient ? 'text-gray-900' : 'text-red-600'}`}>
+                          {(ratio * 100).toFixed(1)}%
+                        </div>
+                        {needed > 0 && (
+                          <div className="text-xs text-gray-500 mt-1">
+                            Need: {Math.ceil(needed).toLocaleString()} ngonka
+                          </div>
+                        )}
+                      </div>
+                      <div className="bg-gray-50 p-4 rounded">
+                        <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Collateral Balance</label>
+                        <div className={`text-lg font-semibold ${isSufficient ? 'text-gray-900' : 'text-red-600'}`}>
+                          {(balance / 1_000_000_000).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 9 })} GNK
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {balance.toLocaleString()} ngonka
+                        </div>
+                      </div>
+                    </>
+                  )
+                })()}
               </div>
             </div>
 

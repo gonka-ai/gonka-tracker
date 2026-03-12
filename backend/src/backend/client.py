@@ -228,6 +228,10 @@ class GonkaClient:
     async def get_latest_epoch(self) -> Dict[str, Any]:
         return await self._make_request("/v1/epochs/latest")
     
+    async def get_confirmation_poc_events(self, epoch_index: int) -> List[Dict[str, Any]]:
+        data = await self._make_request(f"/chain-api/productscience/inference/inference/confirmation_poc_events/{epoch_index}")
+        return data.get("events", [])
+
     async def get_authz_grants(self, granter: str) -> List[Dict[str, Any]]:
         REQUIRED_PERMISSIONS = {
             "MsgStartInference",
@@ -311,10 +315,10 @@ class GonkaClient:
             if len(info["permissions"]) >= 24:
                 warm_keys.append({
                     "grantee_address": grantee,
-                    "granted_at": info["expiration"]
+                    "expiration": info["expiration"]
                 })
         
-        warm_keys.sort(key=lambda x: x["granted_at"], reverse=True)
+        warm_keys.sort(key=lambda x: x["expiration"], reverse=True)
         
         logger.info(f"Found {len(warm_keys)} warm keys for {granter}")
         return warm_keys
@@ -332,7 +336,19 @@ class GonkaClient:
     
     async def get_block(self, height: int) -> Dict[str, Any]:
         return await self._make_request(f"/chain-rpc/block?height={height}")
-    
+
+    async def get_collateral_params(self) -> Dict[str, Any]:
+        return await self._make_request("/chain-api/productscience/inference/inference/params")
+
+    async def get_collateral_balance(self, address: str) -> Optional[int]:
+        """Get collateral balance in ngonka for a participant address."""
+        try:
+            data = await self._make_request(f"/chain-api/productscience/inference/collateral/collateral/{address}")
+            amount = data.get("amount", {})
+            return int(amount.get("amount", "0"))
+        except Exception:
+            return None
+
     async def get_restrictions_params(self) -> Dict[str, Any]:
         return await self._make_request("/chain-api/productscience/inference/restrictions/params")
     

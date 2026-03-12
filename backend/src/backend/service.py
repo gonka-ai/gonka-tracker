@@ -9,6 +9,7 @@ from backend.models import (
     ParticipantStats,
     CurrentEpochStats,
     InferenceResponse,
+    CollateralParams,
     RewardInfo,
     SeedInfo,
     ParticipantDetailsResponse,
@@ -20,7 +21,8 @@ from backend.models import (
     TimelineResponse,
     ModelInfo,
     ModelStats,
-    ModelsResponse
+    ModelsResponse,
+    CpocEvent
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,68 @@ def _extract_ml_nodes_map(ml_nodes_data: List[Dict]) -> Dict[str, int]:
     return result
 
 
+def _parse_decimal(d: Dict) -> float:
+    if not d:
+        return 0.0
+    return int(d.get("value", 0)) * (10 ** int(d.get("exponent", 0)))
+
+
+def _compute_potential_weight(ml_nodes_data: List[Dict]) -> int:
+    """Sum poc_weight of all ML nodes for a participant."""
+    total = 0
+    for model_group in ml_nodes_data:
+        for node in model_group.get("ml_nodes", []):
+            total += node.get("poc_weight", 0)
+    return total
+
+
+async def _compute_median_weight_per_gpu(
+    client: 'GonkaClient',
+    active_participants: List[Dict],
+    batch_size: int = 10
+) -> Optional[float]:
+    """Calculate median weight-per-H100 from hardware data."""
+    weight_per_gpu_values = []
+
+    async def process_participant(p):
+        participant_id = p["index"]
+        weight = p.get("weight", 0)
+        if not weight or weight <= 0:
+            return None
+        try:
+            hw_nodes = await client.get_hardware_nodes(participant_id)
+            total_h100 = 0
+            for node in hw_nodes:
+                for hw in node.get("hardware", []):
+                    if "H100" in hw.get("type", ""):
+                        total_h100 += hw.get("count", 0)
+            if total_h100 > 0:
+                return weight / total_h100
+        except Exception:
+            pass
+        return None
+
+    for i in range(0, len(active_participants), batch_size):
+        batch = active_participants[i:i + batch_size]
+        results = await asyncio.gather(
+            *[process_participant(p) for p in batch],
+            return_exceptions=True
+        )
+        for r in results:
+            if isinstance(r, (int, float)) and r > 0:
+                weight_per_gpu_values.append(r)
+
+    if not weight_per_gpu_values:
+        return None
+
+    weight_per_gpu_values.sort()
+    n = len(weight_per_gpu_values)
+    if n % 2 == 1:
+        return round(weight_per_gpu_values[n // 2], 2)
+    else:
+        return round((weight_per_gpu_values[n // 2 - 1] + weight_per_gpu_values[n // 2]) / 2, 2)
+
+
 class InferenceService:
     def __init__(self, client: GonkaClient, cache_db: CacheDB):
         self.client = client
@@ -63,6 +127,40 @@ class InferenceService:
         self.timeline_cache_ttl: float = 30.0
         self.cache_warming_in_progress: bool = False
         self.last_cache_warm_time: Optional[float] = None
+        self.median_weight_per_gpu: Optional[float] = None
+        self.median_gpu_last_calculated: Optional[float] = None
+        self.cpoc_events: List[CpocEvent] = []
+        self.cpoc_tracking_epoch: Optional[int] = None
+
+    async def poll_cpoc_events(self):
+        try:
+            latest = await self.client.get_latest_epoch()
+            epoch_index = latest["latest_epoch"]["index"]
+
+            chain_events = await self.client.get_confirmation_poc_events(epoch_index)
+
+            events = []
+            for ev in chain_events:
+                trigger = int(ev.get("trigger_height", 0))
+                gen_start = int(ev.get("generation_start_height", 0))
+                phase = ev.get("phase", "")
+                end_height = trigger + 281 if "COMPLETED" in phase else None
+
+                events.append(CpocEvent(
+                    trigger_height=trigger,
+                    end_height=end_height,
+                    epoch_index=epoch_index,
+                    phase=phase,
+                ))
+
+            if len(events) != len(self.cpoc_events) or self.cpoc_tracking_epoch != epoch_index:
+                logger.info(f"cPOC events for epoch {epoch_index}: {len(events)} (was {len(self.cpoc_events)})")
+
+            self.cpoc_events = events
+            self.cpoc_tracking_epoch = epoch_index
+
+        except Exception as e:
+            logger.warning(f"Failed to poll cPOC events: {e}")
     
     async def _calculate_avg_block_time(self, current_height: int) -> float:
         try:
@@ -86,6 +184,60 @@ class InferenceService:
             logger.warning(f"Failed to calculate avg block time: {e}")
             return 6.0
     
+    async def _update_median_weight_per_gpu(self, active_participants: List[Dict]):
+        try:
+            median = await _compute_median_weight_per_gpu(self.client, active_participants)
+            if median and median > 0:
+                self.median_weight_per_gpu = median
+                self.median_gpu_last_calculated = time.time()
+                logger.info(f"Median weight per GPU: {median}")
+        except Exception as e:
+            logger.warning(f"Failed to compute median weight per GPU: {e}")
+
+    async def fetch_collateral_params(self) -> Optional[CollateralParams]:
+        try:
+            data = await self.client.get_collateral_params()
+            cp = data.get("params", {}).get("collateral_params", {})
+            return CollateralParams(
+                grace_period_end_epoch=int(cp.get("grace_period_end_epoch", 0)),
+                base_weight_ratio=_parse_decimal(cp.get("base_weight_ratio")),
+                collateral_per_weight_unit=_parse_decimal(cp.get("collateral_per_weight_unit")),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch collateral params: {e}")
+            return None
+
+    def compute_collateral_data(
+        self,
+        participants: List[ParticipantStats],
+        active_participants_list: List[Dict],
+        collateral_params: CollateralParams,
+        epoch_id: int,
+    ) -> List[ParticipantStats]:
+        if epoch_id <= collateral_params.grace_period_end_epoch:
+            return participants
+
+        ml_nodes_by_index = {}
+        for p in active_participants_list:
+            ml_nodes_by_index[p["index"]] = p.get("ml_nodes", [])
+
+        bwr = collateral_params.base_weight_ratio
+        cpwu = collateral_params.collateral_per_weight_unit
+
+        for participant in participants:
+            ml_nodes = ml_nodes_by_index.get(participant.index, [])
+            potential = _compute_potential_weight(ml_nodes)
+            participant.potential_weight = potential
+
+            if potential > 0:
+                participant.collateral_ratio = round(participant.weight / potential, 4)
+                participant.needed_ngonka = potential * (1 - bwr) * cpwu
+            else:
+                participant.collateral_ratio = 1.0
+                participant.needed_ngonka = 0
+
+        return participants
+
     async def get_canonical_height(self, epoch_id: int, requested_height: Optional[int] = None) -> int:
         if self.current_epoch_id is None:
             latest_info = await self.client.get_latest_epoch()
@@ -257,6 +409,22 @@ class InferenceService:
             active_participants_list = epoch_data["active_participants"]["participants"]
             participants_stats = await self.merge_jail_and_health_data(epoch_id, participants_stats, height, active_participants_list)
             participants_stats = await self.merge_confirmation_data(epoch_id, participants_stats, height, active_participants_list)
+
+            collateral_params = await self.fetch_collateral_params()
+            if collateral_params:
+                participants_stats = self.compute_collateral_data(
+                    participants_stats, active_participants_list, collateral_params, epoch_id
+                )
+
+            # Fetch collateral balances for all participants in parallel
+            balance_tasks = [
+                self.client.get_collateral_balance(p.index)
+                for p in participants_stats
+            ]
+            balances = await asyncio.gather(*balance_tasks, return_exceptions=True)
+            for p, bal in zip(participants_stats, balances):
+                if isinstance(bal, int):
+                    p.collateral_balance = bal
             
             latest_info = await self.client.get_latest_epoch()
             latest_epoch_index = latest_info["latest_epoch"]["index"]
@@ -296,18 +464,23 @@ class InferenceService:
                 current_block_timestamp=current_block_timestamp,
                 avg_block_time=avg_block_time,
                 next_poc_start_block=next_poc_start_block,
-                set_new_validators_block=set_new_validators_block
+                set_new_validators_block=set_new_validators_block,
+                collateral_params=collateral_params,
+                median_weight_per_gpu=self.median_weight_per_gpu,
             )
-            
-            await self.cache_db.save_stats_batch(
-                epoch_id=epoch_id,
-                height=height,
-                participants_stats=stats_for_saving
-            )
-            
+
             self.current_epoch_id = epoch_id
             self.current_epoch_data = response
             self.last_fetch_time = current_time
+
+            try:
+                await self.cache_db.save_stats_batch(
+                    epoch_id=epoch_id,
+                    height=height,
+                    participants_stats=stats_for_saving
+                )
+            except Exception as e:
+                logger.warning(f"Failed to save stats to database (non-critical): {e}")
             
             asyncio.create_task(self.warm_participant_cache(
                 epoch_data["active_participants"]["participants"],
@@ -709,6 +882,7 @@ class InferenceService:
             hardware_nodes_data = await self.cache_db.get_hardware_nodes(epoch_id, participant_id)
             
             fetch_tasks = []
+            collateral_balance = None
             
             if missing_epoch_ids:
                 logger.info(f"Fetching missing rewards inline for epochs {missing_epoch_ids}")
@@ -723,6 +897,10 @@ class InferenceService:
             if hardware_nodes_data is None:
                 logger.info(f"Fetching hardware nodes inline for participant {participant_id}")
                 fetch_tasks.append(('hardware', None, self.client.get_hardware_nodes(participant_id)))
+
+            # Always fetch collateral balance for current epoch
+            if is_current:
+                fetch_tasks.append(('collateral_balance', None, self.client.get_collateral_balance(participant_id)))
             
             if fetch_tasks:
                 results = await asyncio.gather(*[task[2] for task in fetch_tasks], return_exceptions=True)
@@ -749,6 +927,8 @@ class InferenceService:
                     elif task_type == 'hardware':
                         hardware_nodes_data = result if result else []
                         await self.cache_db.save_hardware_nodes_batch(epoch_id, participant_id, hardware_nodes_data)
+                    elif task_type == 'collateral_balance':
+                        collateral_balance = result
                 
                 if newly_fetched_rewards:
                     await self.cache_db.save_reward_batch(newly_fetched_rewards)
@@ -797,7 +977,7 @@ class InferenceService:
             warm_keys = [
                 WarmKeyInfo(
                     grantee_address=wk["grantee_address"],
-                    granted_at=wk["granted_at"]
+                    expiration=wk["expiration"]
                 )
                 for wk in warm_keys_data
             ]
@@ -835,7 +1015,8 @@ class InferenceService:
                 rewards=rewards,
                 seed=seed,
                 warm_keys=warm_keys,
-                ml_nodes=ml_nodes
+                ml_nodes=ml_nodes,
+                collateral_balance=collateral_balance
             )
             
         except Exception as e:
@@ -1217,6 +1398,7 @@ class InferenceService:
             self.timeline_cache_time is not None and
             current_time - self.timeline_cache_time < self.timeline_cache_ttl):
             logger.info(f"Returning cached timeline data (age: {current_time - self.timeline_cache_time:.1f}s)")
+            self.timeline_cache.cpoc_events = [e for e in self.cpoc_events if e.epoch_index == self.timeline_cache.current_epoch_index]
             return self.timeline_cache
         
         if self.timeline_cache is None:
@@ -1225,6 +1407,7 @@ class InferenceService:
                 logger.info("Loading timeline from database cache on startup")
                 timeline_dict = cached_data["timeline"]
                 try:
+                    cpoc_for_epoch = [e for e in self.cpoc_events if e.epoch_index == current_epoch_index]
                     response = TimelineResponse(
                         current_block=BlockInfo(**timeline_dict["current_block"]),
                         reference_block=BlockInfo(**timeline_dict["reference_block"]),
@@ -1234,10 +1417,12 @@ class InferenceService:
                         current_epoch_index=timeline_dict["current_epoch_index"],
                         epoch_length=timeline_dict["epoch_length"],
                         epoch_stages=timeline_dict.get("epoch_stages"),
-                        next_epoch_stages=timeline_dict.get("next_epoch_stages")
+                        next_epoch_stages=timeline_dict.get("next_epoch_stages"),
+                        cpoc_events=[CpocEvent(**e) for e in timeline_dict.get("cpoc_events", [])]
                     )
                     self.timeline_cache = response
                     self.timeline_cache_time = current_time - 29
+                    self.timeline_cache.cpoc_events = [e for e in self.cpoc_events if e.epoch_index == response.current_epoch_index]
                     return response
                 except Exception as e:
                     logger.warning(f"Failed to parse cached timeline data: {e}")
@@ -1276,6 +1461,8 @@ class InferenceService:
             )
         ]
         
+        cpoc_for_epoch = [e for e in self.cpoc_events if e.epoch_index == current_epoch_index]
+
         response = TimelineResponse(
             current_block=BlockInfo(height=current_height, timestamp=current_timestamp),
             reference_block=BlockInfo(height=reference_height, timestamp=reference_timestamp),
@@ -1285,7 +1472,8 @@ class InferenceService:
             current_epoch_index=current_epoch_index,
             epoch_length=epoch_length,
             epoch_stages=epoch_stages,
-            next_epoch_stages=next_epoch_stages
+            next_epoch_stages=next_epoch_stages,
+            cpoc_events=cpoc_for_epoch
         )
         
         self.timeline_cache = response

@@ -6,7 +6,6 @@ import { EpochTimer } from './EpochTimer'
 
 export function Timeline() {
   const [hoveredBlock, setHoveredBlock] = useState<number | null>(null)
-  const [hoveredEpoch, setHoveredEpoch] = useState<number | null>(null)
   const [mousePosition, setMousePosition] = useState<{ x: number; y: number } | null>(null)
   const [targetHeight, setTargetHeight] = useState<number | null>(null)
   const [urlBlock, setUrlBlock] = useState<number | null>(null)
@@ -81,14 +80,11 @@ export function Timeline() {
   const calculateBlockTime = (blockHeight: number): { utc: string; local: string } => {
     if (!data) return { utc: '', local: '' }
 
-    const currentHeight = getEstimatedCurrentBlock()
     const blockTimestamp = new Date(data.current_block.timestamp).getTime()
-    const currentTime = Date.now()
-    const elapsedSinceBlock = currentTime - blockTimestamp
-    const blockDiff = blockHeight - currentHeight
-    const timeDiff = blockDiff * data.avg_block_time * 1000
+    const isPast = blockHeight <= data.current_block.height
 
-    const estimatedTime = new Date(blockTimestamp + elapsedSinceBlock + timeDiff)
+    const blockDiff = blockHeight - data.current_block.height
+    const estimatedTime = new Date(blockTimestamp + blockDiff * data.avg_block_time * 1000)
     const options: Intl.DateTimeFormatOptions = {
       year: 'numeric',
       month: 'short',
@@ -164,8 +160,6 @@ export function Timeline() {
     maxBlock = maxEventBlock + Math.floor(blocksInTwoMonths * 0.1)
   }
   
-  const blockRange = maxBlock - minBlock
-
   const getEpochData = () => {
     const epochs: Array<{ block: number; epochNumber: number }> = []
     
@@ -259,6 +253,339 @@ export function Timeline() {
             {loading ? 'Refreshing...' : 'Refresh'}
           </button>
         </div>
+      </div>
+
+      <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-bold text-gray-900">Current Epoch</h2>
+        </div>
+
+        <div className="relative mt-8">
+          {(() => {
+            const epochStart = data.current_epoch_start
+            const epochEnd = epochStart + data.epoch_length + 300
+            const epochRange = epochEnd - epochStart
+            const currentBlock = getEstimatedCurrentBlock()
+            const progressPos = ((currentBlock - epochStart) / epochRange) * 100
+
+            const epochEvents: Array<{ block: number; label: string; fullLabel: string }> = []
+
+            // PoC start of current epoch
+            if (data.epoch_stages?.poc_start && data.epoch_stages.poc_start >= epochStart && data.epoch_stages.poc_start <= epochEnd) {
+              epochEvents.push({
+                block: data.epoch_stages.poc_start,
+                label: `PoC ${data.current_epoch_index} Start`,
+                fullLabel: `PoC ${data.current_epoch_index} Start`
+              })
+            }
+            if (data.epoch_stages?.set_new_validators && data.epoch_stages.set_new_validators >= epochStart && data.epoch_stages.set_new_validators <= epochEnd) {
+              epochEvents.push({
+                block: data.epoch_stages.set_new_validators,
+                label: "New Validators",
+                fullLabel: "Set New Validators"
+              })
+            }
+            if (data.epoch_stages?.inference_validation_cutoff && data.epoch_stages.inference_validation_cutoff >= epochStart && data.epoch_stages.inference_validation_cutoff <= epochEnd) {
+              epochEvents.push({
+                block: data.epoch_stages.inference_validation_cutoff,
+                label: "Val Cutoff",
+                fullLabel: "Inference Validation Cutoff"
+              })
+            }
+            if (data.epoch_stages?.next_poc_start && data.epoch_stages.next_poc_start >= epochStart && data.epoch_stages.next_poc_start <= epochEnd) {
+              epochEvents.push({
+                block: data.epoch_stages.next_poc_start,
+                label: `PoC ${data.current_epoch_index + 1} Start`,
+                fullLabel: `PoC ${data.current_epoch_index + 1} Start`
+              })
+            }
+
+            if (data.cpoc_events) {
+              data.cpoc_events.forEach((cpoc, i) => {
+                if (cpoc.trigger_height >= epochStart && cpoc.trigger_height <= epochEnd) {
+                  epochEvents.push({
+                    block: cpoc.trigger_height,
+                    label: `cPoC #${i + 1}`,
+                    fullLabel: `cPoC #${i + 1} Start`
+                  })
+                }
+                const endBlock = cpoc.end_height || (cpoc.trigger_height + 281)
+                if (endBlock >= epochStart && endBlock <= epochEnd) {
+                  epochEvents.push({
+                    block: endBlock,
+                    label: `cPoC #${i + 1} End`,
+                    fullLabel: `cPoC #${i + 1} End`
+                  })
+                }
+              })
+            }
+
+            // Sort events by block height for proper label placement
+            epochEvents.sort((a, b) => a.block - b.block)
+
+            const tickBlocks: number[] = []
+            const firstTick = Math.ceil(epochStart / 100) * 100
+            for (let block = firstTick; block <= epochEnd; block += 100) {
+              tickBlocks.push(block)
+            }
+
+            const milestoneBlocks: number[] = []
+            const firstMilestone = Math.ceil(epochStart / 1000) * 1000
+            for (let block = firstMilestone; block <= epochEnd; block += 1000) {
+              milestoneBlocks.push(block)
+            }
+
+            // Danger zone: from the epoch start poc through set_new_validators (already happened)
+            const currentEpochSetValidators = data.epoch_stages?.set_new_validators
+            const currentPocStart = data.current_epoch_start
+
+            // Danger zone near end: validation_cutoff to next_poc_start
+            const validationCutoff = data.epoch_stages?.inference_validation_cutoff
+            const nextPocStart = data.epoch_stages?.next_poc_start
+
+            return (
+              <svg
+                width="100%"
+                height="280"
+                className="overflow-visible cursor-pointer"
+                onMouseMove={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const ratio = x / rect.width
+                  const block = Math.round(epochStart + ratio * epochRange)
+                  setHoveredBlock(block)
+                  setMousePosition({ x: e.clientX, y: e.clientY })
+                }}
+                onMouseLeave={() => {
+                  setHoveredBlock(null)
+                  setMousePosition(null)
+                }}
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect()
+                  const x = e.clientX - rect.left
+                  const ratio = x / rect.width
+                  const block = Math.round(epochStart + ratio * epochRange)
+                  handleTimelineClick(block)
+                }}
+              >
+                {/* Danger zone: poc_start to set_new_validators (beginning of epoch) */}
+                {currentEpochSetValidators && currentEpochSetValidators >= epochStart && currentPocStart <= epochEnd && (
+                  <rect
+                    x={`${((Math.max(currentPocStart, epochStart) - epochStart) / epochRange) * 100}%`}
+                    y="80"
+                    width={`${((Math.min(currentEpochSetValidators, epochEnd) - Math.max(currentPocStart, epochStart)) / epochRange) * 100}%`}
+                    height="120"
+                    fill="#FEE2E2"
+                    opacity="0.5"
+                  />
+                )}
+
+                {/* Danger zone: validation_cutoff to next_poc_start (end of epoch) */}
+                {validationCutoff && nextPocStart && validationCutoff >= epochStart && nextPocStart <= epochEnd && (
+                  <rect
+                    x={`${((validationCutoff - epochStart) / epochRange) * 100}%`}
+                    y="80"
+                    width={`${((nextPocStart - validationCutoff) / epochRange) * 100}%`}
+                    height="120"
+                    fill="#FEE2E2"
+                    opacity="0.5"
+                  />
+                )}
+
+                {data.cpoc_events?.map((cpoc, idx) => {
+                  const cpocStart = cpoc.trigger_height
+                  const cpocEnd = cpoc.end_height || (cpocStart + 281)
+                  if (cpocEnd < epochStart || cpocStart > epochEnd) return null
+                  const x1 = ((Math.max(cpocStart, epochStart) - epochStart) / epochRange) * 100
+                  const w = ((Math.min(cpocEnd, epochEnd) - Math.max(cpocStart, epochStart)) / epochRange) * 100
+                  return (
+                    <g key={`cpoc-zone-${idx}`}>
+                      <rect
+                        x={`${x1}%`}
+                        y="80"
+                        width={`${w}%`}
+                        height="120"
+                        fill="#E9D5FF"
+                        opacity="0.5"
+                      />
+                      <line
+                        x1={`${((cpocStart - epochStart) / epochRange) * 100}%`}
+                        y1="80"
+                        x2={`${((cpocStart - epochStart) / epochRange) * 100}%`}
+                        y2="200"
+                        stroke="#8B5CF6"
+                        strokeWidth="1.5"
+                        strokeDasharray="4 2"
+                      />
+                    </g>
+                  )
+                })}
+
+                {/* Main line */}
+                <line x1="0" y1="140" x2="100%" y2="140" stroke="#E5E7EB" strokeWidth="2" />
+
+                {/* Tick marks */}
+                {tickBlocks.map((block, idx) => {
+                  const pos = ((block - epochStart) / epochRange) * 100
+                  if (pos < 0 || pos > 100) return null
+                  return (
+                    <line key={`ct-${idx}`} x1={`${pos}%`} y1="130" x2={`${pos}%`} y2="150" stroke="#D1D5DB" strokeWidth="1" opacity="0.3" />
+                  )
+                })}
+
+                {/* Milestone labels */}
+                {milestoneBlocks.map((block, idx) => {
+                  const pos = ((block - epochStart) / epochRange) * 100
+                  if (pos < 0 || pos > 100) return null
+                  return (
+                    <g key={`cm-${idx}`}>
+                      <line x1={`${pos}%`} y1="120" x2={`${pos}%`} y2="160" stroke="#9CA3AF" strokeWidth="1.5" opacity="0.5" />
+                      <text x={`${pos}%`} y="175" textAnchor="middle" className="text-xs fill-gray-500" style={{ fontSize: '10px' }}>
+                        {block.toLocaleString()}
+                      </text>
+                    </g>
+                  )
+                })}
+
+                {/* Stage events — pre-assign top/bottom to avoid overlap */}
+                {(() => {
+                  // Pre-compute positions and assign levels to avoid label overlaps
+                  // Levels: 0=bottom, 1=top, 2=bottom-far
+                  const positions = epochEvents.map(e => ((e.block - epochStart) / epochRange) * 100)
+                  const levels: number[] = []
+                  const THRESHOLD = 7 // % min distance between labels on same level
+
+                  epochEvents.forEach((_event, idx) => {
+                    const pos = positions[idx]
+                    // Try each level in order: bottom, top, bottom-far
+                    for (const level of [0, 1, 2]) {
+                      let conflict = false
+                      for (let j = idx - 1; j >= 0; j--) {
+                        if (levels[j] === level && Math.abs(pos - positions[j]) < THRESHOLD) {
+                          conflict = true
+                          break
+                        }
+                      }
+                      if (!conflict) {
+                        levels.push(level)
+                        return
+                      }
+                    }
+                    levels.push(0) // fallback
+                  })
+
+                  const levelConfig = [
+                    { labelY: 210, lineY1: 200 }, // bottom
+                    { labelY: 55, lineY1: 80 },   // top
+                    { labelY: 240, lineY1: 200 },  // bottom-far
+                  ]
+
+                  return epochEvents.map((event, idx) => {
+                    const position = positions[idx]
+                    if (position < 0 || position > 100) return null
+
+                    const isPast = event.block <= currentBlock
+                    const isCpoc = event.label.startsWith('cPoC')
+                    const color = isCpoc ? '#8B5CF6' : (isPast ? '#6B7280' : '#3B82F6')
+                    const config = levelConfig[levels[idx]]
+
+                    const labelY = config.labelY
+                    const lineY1 = config.lineY1
+
+                    return (
+                      <g
+                        key={`ce-${idx}`}
+                        className="cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleTimelineClick(event.block)
+                        }}
+                      >
+                        <line
+                          x1={`${position}%`}
+                          y1={lineY1}
+                          x2={`${position}%`}
+                          y2="140"
+                          stroke={color}
+                          strokeWidth="2"
+                          strokeDasharray="4 2"
+                        />
+                        <circle cx={`${position}%`} cy="140" r="5" fill={color} />
+                        <text
+                          x={`${position}%`}
+                          y={labelY}
+                          textAnchor="middle"
+                          className="text-xs font-semibold"
+                          fill={color}
+                        >
+                          {event.label}
+                        </text>
+                        <text
+                          x={`${position}%`}
+                          y={labelY + 12}
+                          textAnchor="middle"
+                          className="text-xs"
+                          fill={color}
+                        >
+                          {event.block.toLocaleString()}
+                        </text>
+                      </g>
+                    )
+                  })
+                })()}
+
+                {/* Current block marker — drawn last to be on top */}
+                <line
+                  x1={`${progressPos}%`}
+                  y1="80"
+                  x2={`${progressPos}%`}
+                  y2="200"
+                  stroke="#111827"
+                  strokeWidth="2"
+                />
+                <text
+                  x={`${progressPos}%`}
+                  y="35"
+                  textAnchor="middle"
+                  className="text-sm fill-gray-900 font-semibold"
+                >
+                  Current
+                </text>
+
+                {/* Hover line */}
+                {hoveredBlock !== null && hoveredBlock >= epochStart && hoveredBlock <= epochEnd && (
+                  <line
+                    x1={`${((hoveredBlock - epochStart) / epochRange) * 100}%`}
+                    y1="80"
+                    x2={`${((hoveredBlock - epochStart) / epochRange) * 100}%`}
+                    y2="200"
+                    stroke="#F59E0B"
+                    strokeWidth="2"
+                    opacity="0.5"
+                  />
+                )}
+              </svg>
+            )
+          })()}
+        </div>
+
+        {hoveredBlock !== null && mousePosition && (
+          <div
+            className="fixed z-50 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm pointer-events-none"
+            style={{
+              left: mousePosition.x + 10,
+              top: mousePosition.y - 80,
+            }}
+          >
+            <div className="font-semibold">Block {hoveredBlock.toLocaleString()}</div>
+            <div className="text-xs text-gray-300 mt-1">
+              {calculateBlockTime(hoveredBlock).utc}
+            </div>
+            <div className="text-xs text-gray-300">
+              {calculateBlockTime(hoveredBlock).local}
+            </div>
+          </div>
+        )}
       </div>
 
       <div ref={detailedTimelineRef} className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
@@ -415,9 +742,9 @@ export function Timeline() {
                     return (
                       <rect
                         x={`${((Math.max(currentPocStart, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
-                        y="40"
+                        y="80"
                         width={`${((Math.min(currentEpochSetValidators, detailedMaxBlock) - Math.max(currentPocStart, detailedMinBlock)) / detailedBlockRange) * 100}%`}
-                        height="200"
+                        height="120"
                         fill="#FEE2E2"
                         opacity="0.5"
                       />
@@ -429,9 +756,9 @@ export function Timeline() {
                 {validationCutoff && setValidators && setValidators >= detailedMinBlock && validationCutoff <= detailedMaxBlock && (
                   <rect
                     x={`${((Math.max(validationCutoff, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
-                    y="40"
+                    y="80"
                     width={`${((Math.min(setValidators, detailedMaxBlock) - Math.max(validationCutoff, detailedMinBlock)) / detailedBlockRange) * 100}%`}
-                    height="200"
+                    height="120"
                     fill="#FEE2E2"
                     opacity="0.5"
                   />
@@ -452,9 +779,9 @@ export function Timeline() {
                     return (
                       <rect
                         x={`${((Math.max(nextValidationCutoff, detailedMinBlock) - detailedMinBlock) / detailedBlockRange) * 100}%`}
-                        y="40"
+                        y="80"
                         width={`${((Math.min(secondSetValidators, detailedMaxBlock) - Math.max(nextValidationCutoff, detailedMinBlock)) / detailedBlockRange) * 100}%`}
-                        height="200"
+                        height="120"
                         fill="#FEE2E2"
                         opacity="0.5"
                       />
@@ -671,265 +998,118 @@ export function Timeline() {
       </div>
 
       <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-        <div className="mb-4">
-          <h2 className="text-xl font-bold text-gray-900 mb-1">2-Month Timeline</h2>
-          <div className="text-sm text-gray-600">
-            Range: {minBlock.toLocaleString()} - {maxBlock.toLocaleString()} 
-            <span className="text-gray-500 ml-2">
-              (~{Math.round(blocksInTwoMonths / (24 * 3600 / data.avg_block_time))} days range)
-            </span>
-          </div>
-        </div>
-        <div className="relative mt-8">
-          <svg
-            width="100%"
-            height="220"
-            className="overflow-visible cursor-pointer"
-            onMouseMove={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              const x = e.clientX - rect.left
-              const ratio = x / rect.width
-              const block = Math.round(minBlock + ratio * blockRange)
-              setHoveredBlock(block)
-              setMousePosition({ x: e.clientX, y: e.clientY })
-            }}
-            onMouseLeave={() => {
-              setHoveredBlock(null)
-              setMousePosition(null)
-            }}
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect()
-              const x = e.clientX - rect.left
-              const ratio = x / rect.width
-              const block = Math.round(minBlock + ratio * blockRange)
-              handleTimelineClick(block)
-            }}
-          >
-            <line
-              x1="0"
-              y1="110"
-              x2="100%"
-              y2="110"
-              stroke="#E5E7EB"
-              strokeWidth="2"
-            />
+        <h2 className="text-xl font-bold text-gray-900 mb-4">Epoch Schedule</h2>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Epoch</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Start Block</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">End Block</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Start Date</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">End Date</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Duration</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {(() => { const currentIdx = epochData.findIndex(e => e.epochNumber === data.current_epoch_index); const sliced = epochData.slice(currentIdx >= 0 ? currentIdx : 0, (currentIdx >= 0 ? currentIdx : 0) + 10); return sliced.map((epoch, idx) => {
+                const nextEpoch = sliced[idx + 1]
+                const endBlock = nextEpoch ? nextEpoch.block - 1 : epoch.block + data.epoch_length - 1
+                const startTime = calculateBlockTime(epoch.block)
+                const endTime = calculateBlockTime(endBlock)
+                const isCurrent = epoch.epochNumber === data.current_epoch_index
+                const durationBlocks = endBlock - epoch.block + 1
+                const durationSeconds = durationBlocks * data.avg_block_time
+                const durationHours = Math.floor(durationSeconds / 3600)
+                const durationMinutes = Math.round((durationSeconds % 3600) / 60)
 
-            {epochData.map((epoch, idx) => {
-              const position = ((epoch.block - minBlock) / blockRange) * 100
-              if (position < 0 || position > 100) return null
-              
-              const showLabel = epoch.epochNumber % 3 === 0
-              
-              return (
-                <g
-                  key={`epoch-${idx}`}
-                  className="cursor-pointer"
-                  onMouseEnter={(e) => {
-                    e.stopPropagation()
-                    setHoveredBlock(epoch.block)
-                    setHoveredEpoch(epoch.epochNumber)
-                    setMousePosition({ x: e.clientX, y: e.clientY })
-                  }}
-                  onMouseLeave={() => {
-                    setHoveredEpoch(null)
-                  }}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleTimelineClick(epoch.block)
-                  }}
-                >
-                  <line
-                    x1={`${position}%`}
-                    y1="90"
-                    x2={`${position}%`}
-                    y2="130"
-                    stroke="#D1D5DB"
-                    strokeWidth="1.5"
-                    opacity="0.5"
-                  />
-                  {showLabel && (
-                    <text
-                      x={`${position}%`}
-                      y="145"
-                      textAnchor="middle"
-                      className="text-xs fill-gray-500"
-                      style={{ fontSize: '10px' }}
-                    >
-                      E{epoch.epochNumber}
-                    </text>
-                  )}
-                </g>
-              )
-            })}
-
-            <line
-              x1={`${((data.current_block.height - minBlock) / blockRange) * 100}%`}
-              y1="70"
-              x2={`${((data.current_block.height - minBlock) / blockRange) * 100}%`}
-              y2="150"
-              stroke="#111827"
-              strokeWidth="3"
-            />
-            <text
-              x={`${((data.current_block.height - minBlock) / blockRange) * 100}%`}
-              y="170"
-              textAnchor="middle"
-              className="text-sm fill-gray-900 font-semibold"
-            >
-              Current
-            </text>
-
-            {data.events.map((event, idx) => {
-              const position = ((event.block_height - minBlock) / blockRange) * 100
-              if (position < 0 || position > 100) return null
-              
-              const isPast = event.occurred
-              const color = isPast ? '#6B7280' : '#3B82F6'
-              
-              return (
-                <g
-                  key={idx}
-                  className="cursor-pointer transition-all"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleTimelineClick(event.block_height)
-                  }}
-                >
-                  <line
-                    x1={`${position}%`}
-                    y1="50"
-                    x2={`${position}%`}
-                    y2="170"
-                    stroke={color}
-                    strokeWidth="3"
-                    strokeDasharray="4 2"
-                  />
-                  <circle
-                    cx={`${position}%`}
-                    cy="110"
-                    r="6"
-                    fill={color}
-                  />
-                  <text
-                    x={`${position}%`}
-                    y="40"
-                    textAnchor="middle"
-                    className="text-xs font-semibold"
-                    fill={color}
+                return (
+                  <tr
+                    key={epoch.epochNumber}
+                    className={isCurrent ? 'bg-blue-50 font-semibold' : 'hover:bg-gray-50'}
                   >
-                    {event.description}
-                  </text>
-                  <text
-                    x={`${position}%`}
-                    y="190"
-                    textAnchor="middle"
-                    className="text-xs"
-                    fill={color}
-                  >
-                    {event.block_height.toLocaleString()}
-                  </text>
-                </g>
-              )
-            })}
-
-            {hoveredBlock !== null && (
-              <line
-                x1={`${((hoveredBlock - minBlock) / blockRange) * 100}%`}
-                y1="70"
-                x2={`${((hoveredBlock - minBlock) / blockRange) * 100}%`}
-                y2="150"
-                stroke="#F59E0B"
-                strokeWidth="2"
-                opacity="0.5"
-              />
-            )}
-          </svg>
+                    <td className="px-4 py-2 text-sm text-gray-900">
+                      {epoch.epochNumber}
+                      {isCurrent && (
+                        <span className="ml-2 px-1.5 py-0.5 text-xs bg-blue-100 text-blue-700 rounded">current</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 text-sm text-gray-900 text-right font-mono">{epoch.block.toLocaleString()}</td>
+                    <td className="px-4 py-2 text-sm text-gray-900 text-right font-mono">{endBlock.toLocaleString()}</td>
+                    <td className="px-4 py-2 text-sm text-gray-600">{startTime.utc}</td>
+                    <td className="px-4 py-2 text-sm text-gray-600">{endTime.utc}</td>
+                    <td className="px-4 py-2 text-sm text-gray-900 text-right">{durationHours}h {durationMinutes}m</td>
+                  </tr>
+                )
+              })})()}
+            </tbody>
+          </table>
         </div>
 
-        {hoveredBlock !== null && mousePosition && (
-          <div
-            className="fixed z-50 bg-gray-900 text-white px-4 py-3 rounded-lg shadow-lg text-sm pointer-events-none"
-            style={{
-              left: mousePosition.x + 10,
-              top: mousePosition.y - 80,
-            }}
-          >
-            {hoveredEpoch !== null ? (
-              <>
-                <div className="font-semibold">Epoch {hoveredEpoch} Start</div>
-                <div className="text-xs text-gray-400 mt-1">Block {hoveredBlock.toLocaleString()}</div>
-                <div className="text-xs text-gray-300 mt-1">
-                  {calculateBlockTime(hoveredBlock).utc}
-                </div>
-                <div className="text-xs text-gray-300">
-                  {calculateBlockTime(hoveredBlock).local}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="font-semibold">Block {hoveredBlock.toLocaleString()}</div>
-                <div className="text-xs text-gray-300 mt-1">
-                  {calculateBlockTime(hoveredBlock).utc}
-                </div>
-                <div className="text-xs text-gray-300">
-                  {calculateBlockTime(hoveredBlock).local}
-                </div>
-              </>
-            )}
+        {data.epoch_stages && (
+          <div className="mt-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-3">Current Epoch Stages — Epoch {data.epoch_stages!.epoch_index ?? data.current_epoch_index}</h3>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Stage</th>
+                    <th className="px-4 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Block</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Estimated Date</th>
+                    <th className="px-4 py-2 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {(() => {
+                    const allStages: Array<{ label: string; block: number; isCpoc: boolean }> = []
+
+                    Object.entries(data.epoch_stages!)
+                      .filter(([key, val]) => typeof val === 'number' && key !== 'epoch_index')
+                      .forEach(([key, block]) => {
+                        allStages.push({
+                          label: key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+                          block: block as number,
+                          isCpoc: false,
+                        })
+                      })
+
+                    data.cpoc_events?.forEach((cpoc, idx) => {
+                      const endBlock = cpoc.end_height || (cpoc.trigger_height + 281)
+                      allStages.push({ label: `cPoC #${idx + 1} Start`, block: cpoc.trigger_height, isCpoc: true })
+                      allStages.push({ label: `cPoC #${idx + 1} End`, block: endBlock, isCpoc: true })
+                    })
+
+                    allStages.sort((a, b) => a.block - b.block)
+
+                    return allStages.map((stage) => {
+                      const time = calculateBlockTime(stage.block)
+                      const isPast = stage.block <= getEstimatedCurrentBlock()
+
+                      return (
+                        <tr key={`${stage.label}-${stage.block}`} className={isPast ? 'text-gray-400' : ''}>
+                          <td className={`px-4 py-2 text-sm ${stage.isCpoc ? 'text-purple-500 font-medium' : ''}`}>{stage.label}</td>
+                          <td className="px-4 py-2 text-sm text-right font-mono">{stage.block.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-sm">{time.utc}</td>
+                          <td className="px-4 py-2 text-sm text-center">
+                            <span className={`px-2 py-0.5 text-xs font-semibold rounded ${
+                              isPast
+                                ? 'bg-gray-200 text-gray-600'
+                                : stage.isCpoc ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                            }`}>
+                              {isPast ? 'PAST' : 'UPCOMING'}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  })()}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
 
-      <div className="bg-white rounded-lg shadow-sm p-6 border border-gray-200">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Network Events</h2>
-        
-        {data.events.length === 0 ? (
-          <p className="text-gray-500">No events scheduled</p>
-        ) : (
-          <div className="space-y-3">
-            {data.events.map((event, index) => {
-              const eventTime = calculateBlockTime(event.block_height)
-              const isPast = event.occurred
-
-              return (
-                <div
-                  key={index}
-                  className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                    isPast
-                      ? 'bg-gray-50 border-gray-300 hover:border-gray-400'
-                      : 'bg-blue-50 border-blue-300 hover:border-blue-400'
-                  }`}
-                  onClick={() => handleTimelineClick(event.block_height)}
-                >
-                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-bold text-gray-900">{event.description}</span>
-                        <span
-                          className={`px-2 py-0.5 text-xs font-semibold rounded ${
-                            isPast
-                              ? 'bg-gray-200 text-gray-700'
-                              : 'bg-blue-200 text-blue-700'
-                          }`}
-                        >
-                          {isPast ? 'PAST' : 'FUTURE'}
-                        </span>
-                      </div>
-                      <div className="text-sm text-gray-600">
-                        Block: {event.block_height.toLocaleString()}
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-600 md:text-right">
-                      <div>{eventTime.utc}</div>
-                      <div className="text-xs text-gray-500">{eventTime.local}</div>
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

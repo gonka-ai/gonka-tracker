@@ -35,6 +35,16 @@ export interface Participant {
   confirmation_weight?: number | null;
   confirmation_poc_ratio?: number | null;
   participant_status?: string | null;
+  potential_weight?: number | null;
+  collateral_ratio?: number | null;
+  needed_ngonka?: number | null;
+  collateral_balance?: number | null;
+}
+
+export interface CollateralParams {
+  grace_period_end_epoch: number;
+  base_weight_ratio: number;
+  collateral_per_weight_unit: number;
 }
 
 export interface InferenceResponse {
@@ -49,6 +59,8 @@ export interface InferenceResponse {
   avg_block_time?: number;
   next_poc_start_block?: number;
   set_new_validators_block?: number;
+  collateral_params?: CollateralParams;
+  median_weight_per_gpu?: number;
 }
 
 export interface RewardInfo {
@@ -65,7 +77,7 @@ export interface SeedInfo {
 
 export interface WarmKeyInfo {
   grantee_address: string;
-  granted_at: string;
+  expiration: string;
 }
 
 export interface HardwareInfo {
@@ -89,6 +101,7 @@ export interface ParticipantDetailsResponse {
   seed: SeedInfo | null;
   warm_keys: WarmKeyInfo[];
   ml_nodes: MLNodeInfo[];
+  collateral_balance?: number;
 }
 
 export interface BlockInfo {
@@ -100,6 +113,13 @@ export interface TimelineEvent {
   block_height: number;
   description: string;
   occurred: boolean;
+}
+
+export interface CpocEvent {
+  trigger_height: number;
+  end_height?: number;
+  epoch_index: number;
+  phase?: string;
 }
 
 export interface TimelineResponse {
@@ -119,6 +139,7 @@ export interface TimelineResponse {
     set_new_validators: number;
     [key: string]: any;
   };
+  cpoc_events?: CpocEvent[];
 }
 
 export interface ModelInfo {

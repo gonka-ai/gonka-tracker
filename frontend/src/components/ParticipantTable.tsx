@@ -123,6 +123,9 @@ export function ParticipantTable({ participants, epochId, isCurrentEpoch, curren
             <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
               Invalid Rate
             </th>
+            <th className="px-4 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">
+              Collateral
+            </th>
             <th className="px-2 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider w-16">
               Jail
             </th>
@@ -137,6 +140,9 @@ export function ParticipantTable({ participants, epochId, isCurrentEpoch, curren
                                    parseInt(participant.current_epoch_stats.missed_requests)
             
             const isHighlighted = shouldHighlightRed(participant)
+            const collateralBalance = participant.collateral_balance ?? 0
+            const neededNgonka = participant.needed_ngonka ?? 0
+            const isLowCollateral = collateralBalance < neededNgonka
             
             return (
               <tr
@@ -211,6 +217,11 @@ export function ParticipantTable({ participants, epochId, isCurrentEpoch, curren
                   }`}>
                     {(participant.invalidation_rate * 100).toFixed(2)}%
                   </span>
+                </td>
+                <td className="px-2 py-3 text-center whitespace-nowrap">
+                  <div className="flex justify-center">
+                    <div className={`w-3 h-3 rounded-full ${isLowCollateral ? 'bg-red-600' : 'bg-green-600'}`} title={`Balance: ${collateralBalance.toLocaleString()} / Need: ${neededNgonka.toLocaleString()} ngonka`}></div>
+                  </div>
                 </td>
                 <td className="px-2 py-3 text-center whitespace-nowrap">
                   <div className="flex justify-center">

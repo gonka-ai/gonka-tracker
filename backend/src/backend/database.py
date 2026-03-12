@@ -107,6 +107,17 @@ class CacheDB:
                 CREATE INDEX IF NOT EXISTS idx_warm_keys_participant
                 ON participant_warm_keys(epoch_id, participant_id)
             """)
+            # Migration: rename granted_at -> expiration in participant_warm_keys
+            try:
+                cursor = await db.execute("PRAGMA table_info(participant_warm_keys)")
+                columns = await cursor.fetchall()
+                col_names = [col[1] for col in columns]
+                if "granted_at" in col_names and "expiration" not in col_names:
+                    await db.execute("ALTER TABLE participant_warm_keys RENAME COLUMN granted_at TO expiration")
+                    logger.info("Migrated participant_warm_keys: granted_at -> expiration")
+            except Exception as e:
+                logger.warning(f"Warm keys migration check: {e}")
+
             
             await db.execute("""
                 CREATE TABLE IF NOT EXISTS participant_hardware_nodes (
@@ -577,13 +588,13 @@ class CacheDB:
             for warm_key in warm_keys:
                 await db.execute("""
                     INSERT INTO participant_warm_keys 
-                    (epoch_id, participant_id, grantee_address, granted_at, last_updated)
+                    (epoch_id, participant_id, grantee_address, expiration, last_updated)
                     VALUES (?, ?, ?, ?, ?)
                 """, (
                     epoch_id,
                     participant_id,
                     warm_key.get("grantee_address"),
-                    warm_key.get("granted_at"),
+                    warm_key.get("expiration"),
                     last_updated
                 ))
             
@@ -599,10 +610,10 @@ class CacheDB:
             db.row_factory = aiosqlite.Row
             
             async with db.execute("""
-                SELECT grantee_address, granted_at
+                SELECT grantee_address, expiration
                 FROM participant_warm_keys
                 WHERE epoch_id = ? AND participant_id = ?
-                ORDER BY granted_at DESC
+                ORDER BY expiration DESC
             """, (epoch_id, participant_id)) as cursor:
                 rows = await cursor.fetchall()
                 
@@ -613,7 +624,7 @@ class CacheDB:
                 for row in rows:
                     results.append({
                         "grantee_address": row["grantee_address"],
-                        "granted_at": row["granted_at"]
+                        "expiration": row["expiration"]
                     })
                 
                 return results

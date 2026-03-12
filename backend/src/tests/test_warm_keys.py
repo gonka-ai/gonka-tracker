@@ -21,11 +21,11 @@ async def test_database_warm_keys_operations():
         warm_keys = [
             {
                 "grantee_address": "gonka1warm1",
-                "granted_at": "2026-10-13T11:37:45Z"
+                "expiration": "2026-10-13T11:37:45Z"
             },
             {
                 "grantee_address": "gonka1warm2",
-                "granted_at": "2026-09-13T11:37:45Z"
+                "expiration": "2026-09-13T11:37:45Z"
             }
         ]
         
@@ -58,7 +58,7 @@ async def test_database_warm_keys_replacement():
         warm_keys_v1 = [
             {
                 "grantee_address": "gonka1warm1",
-                "granted_at": "2026-10-13T11:37:45Z"
+                "expiration": "2026-10-13T11:37:45Z"
             }
         ]
         
@@ -67,11 +67,11 @@ async def test_database_warm_keys_replacement():
         warm_keys_v2 = [
             {
                 "grantee_address": "gonka1warm2",
-                "granted_at": "2026-11-13T11:37:45Z"
+                "expiration": "2026-11-13T11:37:45Z"
             },
             {
                 "grantee_address": "gonka1warm3",
-                "granted_at": "2026-12-13T11:37:45Z"
+                "expiration": "2026-12-13T11:37:45Z"
             }
         ]
         
@@ -101,15 +101,15 @@ async def test_database_warm_keys_sorting():
         warm_keys = [
             {
                 "grantee_address": "gonka1old",
-                "granted_at": "2025-01-01T00:00:00Z"
+                "expiration": "2025-01-01T00:00:00Z"
             },
             {
                 "grantee_address": "gonka1new",
-                "granted_at": "2026-12-31T23:59:59Z"
+                "expiration": "2026-12-31T23:59:59Z"
             },
             {
                 "grantee_address": "gonka1mid",
-                "granted_at": "2026-06-15T12:00:00Z"
+                "expiration": "2026-06-15T12:00:00Z"
             }
         ]
         
@@ -128,11 +128,11 @@ async def test_database_warm_keys_sorting():
 def test_warm_key_info_model():
     warm_key = WarmKeyInfo(
         grantee_address="gonka1test123",
-        granted_at="2026-10-13T11:37:45Z"
+        expiration="2026-10-13T11:37:45Z"
     )
     
     assert warm_key.grantee_address == "gonka1test123"
-    assert warm_key.granted_at == "2026-10-13T11:37:45Z"
+    assert warm_key.expiration == "2026-10-13T11:37:45Z"
 
 
 @pytest.mark.asyncio
@@ -200,7 +200,7 @@ async def test_database_warm_keys_multiple_participants():
         warm_keys1 = [
             {
                 "grantee_address": "gonka1warm1",
-                "granted_at": "2026-10-13T11:37:45Z"
+                "expiration": "2026-10-13T11:37:45Z"
             }
         ]
         
@@ -208,11 +208,11 @@ async def test_database_warm_keys_multiple_participants():
         warm_keys2 = [
             {
                 "grantee_address": "gonka1warm2",
-                "granted_at": "2026-10-13T11:37:45Z"
+                "expiration": "2026-10-13T11:37:45Z"
             },
             {
                 "grantee_address": "gonka1warm3",
-                "granted_at": "2026-10-13T11:37:45Z"
+                "expiration": "2026-10-13T11:37:45Z"
             }
         ]
         

@@ -9,6 +9,12 @@ import { EpochTimer } from './components/EpochTimer'
 import { usePrefetch } from './hooks/usePrefetch'
 import { useEstimatedBlock } from './hooks/useEstimatedBlock'
 
+function getH100Coefficient(epoch: number): number {
+  if (epoch < 159) return 440
+  if (epoch < 175) return 284
+  return 254
+}
+
 type Page = 'dashboard' | 'models' | 'timeline'
 
 function App() {
@@ -19,6 +25,7 @@ function App() {
 
   const apiUrl = import.meta.env.VITE_API_URL || '/api'
   const { prefetchAll } = usePrefetch()
+
 
   const fetchInference = async (epochId: number | null) => {
     const endpoint = epochId
@@ -283,7 +290,7 @@ function App() {
                         {data.participants.reduce((sum, p) => sum + p.weight, 0).toLocaleString()}
                       </div>
                       <div className="text-xs text-gray-500 mt-1">
-                        ~{Math.round(data.participants.reduce((sum, p) => sum + p.weight, 0) / 437)} H100 GPUs
+                        ~{Math.round(data.participants.reduce((sum, p) => sum + p.weight, 0) / getH100Coefficient(data.epoch_id))} H100 GPUs
                       </div>
                     </div>
                   </div>
